@@ -1,0 +1,17 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Secrets
+firebase_service_account.json
+
+# Alembic cache
+alembic/versions/__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
