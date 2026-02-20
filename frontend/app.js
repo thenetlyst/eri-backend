@@ -41,7 +41,7 @@ async function startAttempt() {
       Authorization: "Bearer " + token
     },
     body: JSON.stringify({
-      exam_day_id: "72e6dab9-f9e8-4736-97dc-df9def381439"   // ✅ YOUR REAL UUID
+      exam_day_id: "72e6dab9-f9e8-4736-97dc-df9def381439"
     })
   });
 
@@ -55,7 +55,6 @@ async function startAttempt() {
   }
 
   attemptId = data.attempt_id;
-  order = 1;
 
   document.getElementById("login").style.display="none";
   document.getElementById("exam").style.display="block";
@@ -79,14 +78,15 @@ async function loadQuestion() {
   console.log("QUESTION:", data);
 
   if (!data || !data.question_text) {
-    document.getElementById("question").innerText = "No more questions";
+    document.getElementById("question").innerText = "No question";
     document.getElementById("options").innerHTML = "";
     return;
   }
 
   currentQuestion = data;
 
-  document.getElementById("question").innerText = data.question_text;
+  document.getElementById("question").innerText =
+    `Q${data.question_order}: ${data.question_text}`;
 
   renderOptions(data.options);
 }
@@ -101,6 +101,7 @@ function renderOptions(options) {
   container.innerHTML = "";
 
   options.forEach(opt => {
+
     const btn = document.createElement("button");
 
     btn.innerText = `${opt.key}: ${opt.text}`;
@@ -131,6 +132,35 @@ async function submitAnswer(answerKey) {
     })
   });
 
+  alert("Answer saved");
+}
+
+
+// =======================
+// NAVIGATION
+// =======================
+function nextQuestion(){
   order++;
   loadQuestion();
+}
+
+function prevQuestion(){
+  if(order>1){
+    order--;
+    loadQuestion();
+  }
+}
+
+
+// =======================
+// FINAL SUBMIT
+// =======================
+async function finalizeAttempt(){
+
+  await fetch(API + `/attempts/${attemptId}/complete`, {
+    method:"POST",
+    headers:{ Authorization:"Bearer "+token }
+  });
+
+  alert("Exam submitted");
 }

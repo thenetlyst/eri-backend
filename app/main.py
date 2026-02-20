@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------
 
 app = FastAPI(title="ERI Assessment Engine")
+app.include_router(dev_auth_router)
 
 #FrontEnd
 
@@ -47,7 +48,7 @@ app.add_middleware(
 # ----------------------------------------------------------
 # Startup Event
 # ----------------------------------------------------------
-app.include_router(dev_auth_router)
+
 
 @app.on_event("startup")
 def startup_event():

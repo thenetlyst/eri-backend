@@ -1,9 +1,10 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+import uuid
 
 from app.db.session import SessionLocal
-from app.models.user import User
+from app.models.user import User   # ⚠️ note path
 
 security = HTTPBearer()
 
@@ -20,7 +21,7 @@ def get_db():
 
 
 # -----------------------------
-# AUTH Dependency (DEV BYPASS)
+# AUTH Dependency (REAL UUID TOKEN)
 # -----------------------------
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -35,19 +36,21 @@ def get_current_user(
 
     token = credentials.credentials
 
-    # ⭐ DEV TOKEN BYPASS
-    if token == "dev-token":
-        user = db.query(User).first()
+    # ⭐ token IS user UUID now
+    try:
+        user_uuid = uuid.UUID(token)
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token format",
+        )
 
-        if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="Create a user row first",
-            )
+    user = db.query(User).filter(User.id == user_uuid).first()
 
-        return user
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+        )
 
-    raise HTTPException(
-        status_code=401,
-        detail="Invalid token",
-    )
+    return user
