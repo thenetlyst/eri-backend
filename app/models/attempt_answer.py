@@ -8,6 +8,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    Integer,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -45,13 +46,11 @@ class AttemptAnswer(Base):
     is_correct = Column(Boolean, nullable=False)
 
     hint_used = Column(Boolean, nullable=False, default=False)
-
     hint_used_at = Column(DateTime(timezone=True))
 
     answered_at = Column(DateTime(timezone=True), nullable=False)
 
     raw_score = Column(Numeric(10, 2), nullable=False)
-
     effective_score = Column(Numeric(10, 2), nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -61,3 +60,13 @@ class AttemptAnswer(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # ---- Hint replay ----
+    first_hint_opened_at = Column(DateTime(timezone=True))
+    hint_open_count = Column(Integer, nullable=False, default=0)
+    time_to_first_hint_seconds = Column(Integer)
+
+    # ---- Navigation tracking ----
+    visited_at = Column(DateTime(timezone=True))
+    last_viewed_at = Column(DateTime(timezone=True))
+    marked_for_review = Column(Boolean, nullable=False, default=False)

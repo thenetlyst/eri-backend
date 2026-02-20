@@ -1,7 +1,6 @@
-version: '3.9'
-
 services:
-  db:
+
+  exam_db:
     image: postgres:15
     container_name: exam_db
     restart: always
@@ -13,6 +12,18 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  eri-backend:
+    build: .
+    container_name: eri-backend
+    depends_on:
+      - exam_db
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
 
 volumes:
   postgres_data:

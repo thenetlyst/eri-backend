@@ -31,12 +31,14 @@ class Participant(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
+    # 🔑 identity link
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
 
+    # 🔑 challenge enrollment
     challenge_id = Column(
         UUID(as_uuid=True),
         ForeignKey("challenges.id", ondelete="CASCADE"),
@@ -45,8 +47,11 @@ class Participant(Base):
 
     participant_code = Column(String, nullable=False)
 
-    state = Column(String, nullable=False)
+    # 🔥 profile snapshot (this fixes your router errors)
+    name = Column(String, nullable=False)
     college = Column(String, nullable=False)
+    state = Column(String, nullable=False)
+    graduation_year = Column(String, nullable=False)
 
     account_status = Column(
         Enum(AccountStatus, name="account_status_enum"),
