@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.user import User
-from app.core.firebase import verify_firebase_token
 
-security = HTTPBearer(auto_error=False)
+security = HTTPBearer()
 
 
 # -----------------------------
@@ -21,7 +20,7 @@ def get_db():
 
 
 # -----------------------------
-# Firebase Auth Dependency
+# AUTH Dependency (DEV BYPASS)
 # -----------------------------
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -34,25 +33,21 @@ def get_current_user(
             detail="Authorization header missing",
         )
 
-    id_token = credentials.credentials
+    token = credentials.credentials
 
-    decoded_token = verify_firebase_token(id_token)
-    print(decoded_token)
+    # ⭐ DEV TOKEN BYPASS
+    if token == "dev-token":
+        user = db.query(User).first()
 
-    if not decoded_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Firebase token",
-        )
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Create a user row first",
+            )
 
-    firebase_uid = decoded_token.get("uid")
+        return user
 
-    user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not registered",
-        )
-
-    return user
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid token",
+    )
