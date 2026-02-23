@@ -1,0 +1,211 @@
+# app/api/routes/question.py
+
+print("✅ QUESTION ROUTER FILE LOADED")
+
+import random
+import hashlib
+from datetime import datetime, timezone, timedelta
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_db
+from app.models.attempt import Attempt, AttemptStatus
+from app.models.attempt_answer import AttemptAnswer
+from app.services.attempt_service import finalize_attempt
+from app.services.question_cache import get_exam_day_questions_cached
+
+from app.core.exceptions import (
+    NotFoundException,
+    ForbiddenException,
+)
+
+router = APIRouter(prefix="/attempts", tags=["Questions"])
+
+
+# ==========================================================
+# LIST QUESTIONS (CACHED)
+# ==========================================================
+@router.get("/{attempt_id}/questions")
+def list_questions(
+    attempt_id: str,
+    db: Session = Depends(get_db),
+):
+    attempt = db.query(Attempt).filter(
+        Attempt.id == attempt_id
+    ).first()
+
+    if not attempt:
+        raise NotFoundException("Attempt not found")
+
+    if attempt.status == AttemptStatus.SUBMITTED:
+        raise ForbiddenException("Attempt already completed")
+
+    # ⭐ CACHE HIT
+    cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
+
+    # IMPORTANT → copy before use
+    questions = [q.copy() for q in cached_questions]
+
+    answers = db.query(AttemptAnswer).filter(
+        AttemptAnswer.attempt_id == attempt.id
+    ).all()
+
+    answered_map = {str(a.question_id): a for a in answers}
+
+    result = []
+
+    total_base = sum(1 for x in questions if not x["is_special"])
+    answered_base = sum(
+        1
+        for a in answers
+        if not next(q2 for q2 in questions if q2["id"] == str(a.question_id))["is_special"]
+    )
+
+    for q in questions:
+        qid = q["id"]
+
+        is_answered = qid in answered_map
+
+        bonus_locked = False
+        if q["is_special"]:
+            if not attempt.special_unlocked:
+                bonus_locked = True
+            elif answered_base < total_base:
+                bonus_locked = True
+
+        result.append(
+            {
+                "question_id": qid,
+                "question_order": q["question_order"],
+                "difficulty": q["difficulty"],
+                "weight": q["weight"],
+                "is_special": q["is_special"],
+                "is_answered": is_answered,
+                "bonus_locked": bonus_locked,
+            }
+        )
+
+    return result
+
+
+# ==========================================================
+# FETCH SINGLE QUESTION (CACHED)
+# ==========================================================
+@router.get("/{attempt_id}/questions/{question_order}")
+def get_question(
+    attempt_id: str,
+    question_order: int,
+    db: Session = Depends(get_db),
+):
+
+    now = datetime.now(timezone.utc)
+
+    attempt = db.query(Attempt).filter(
+        Attempt.id == attempt_id
+    ).first()
+
+    if not attempt:
+        raise NotFoundException("Attempt not found")
+
+    if attempt.status == AttemptStatus.SUBMITTED:
+        raise ForbiddenException("Attempt already completed")
+
+    if attempt.status != AttemptStatus.IN_PROGRESS:
+        raise ForbiddenException("Attempt is not active")
+
+    if not attempt.started_at:
+        raise ForbiddenException("Attempt not properly started")
+
+    if attempt.allowed_duration_seconds is None:
+        raise ForbiddenException("Attempt duration not configured")
+
+    expiry_time = attempt.started_at + timedelta(
+        seconds=attempt.allowed_duration_seconds
+    )
+
+    if now > expiry_time:
+        finalize_attempt(db, attempt)
+        db.commit()
+        raise ForbiddenException("Attempt time expired")
+
+    remaining_time = int((expiry_time - now).total_seconds())
+
+    # ⭐ CACHE HIT
+    cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
+    questions = [q.copy() for q in cached_questions]
+
+    question = next(
+        (q for q in questions if q["question_order"] == question_order),
+        None
+    )
+
+    if not question:
+        raise NotFoundException("Question not found")
+
+    # Bonus gating
+    if question["is_special"]:
+        if not attempt.special_unlocked:
+            raise ForbiddenException("Bonus not unlocked")
+
+        total_base = sum(1 for x in questions if not x["is_special"])
+
+        answers = db.query(AttemptAnswer).filter(
+            AttemptAnswer.attempt_id == attempt.id
+        ).all()
+
+        answered_base = sum(
+            1
+            for a in answers
+            if not next(q2 for q2 in questions if q2["id"] == str(a.question_id))["is_special"]
+        )
+
+        if answered_base < total_base:
+            raise ForbiddenException("Complete base section before accessing bonus")
+
+    existing_answer = db.query(AttemptAnswer).filter(
+        AttemptAnswer.attempt_id == attempt.id,
+        AttemptAnswer.question_id == question["id"],
+    ).first()
+
+    is_answered = existing_answer is not None
+    hint_used = existing_answer.hint_used if existing_answer else False
+
+    options = [
+        {"key": "A", "text": question["option_a"]},
+        {"key": "B", "text": question["option_b"]},
+        {"key": "C", "text": question["option_c"]},
+        {"key": "D", "text": question["option_d"]},
+    ]
+
+    seed_input = f"{attempt.id}-{question['id']}"
+    seed_hash = hashlib.sha256(seed_input.encode()).hexdigest()
+    seed = int(seed_hash, 16)
+
+    rng = random.Random(seed)
+    rng.shuffle(options)
+
+    return {
+        "question_id": question["id"],
+        "question_order": question["question_order"],
+        "question_text": question["question_text"],
+        "difficulty": question["difficulty"],
+        "weight": question["weight"],
+        "hint_penalty_percentage": question["hint_penalty_percentage"],
+        "is_special": question["is_special"],
+        "is_answered": is_answered,
+        "hint_used": hint_used,
+        "options": options,
+        "remaining_time_seconds": max(remaining_time, 0),
+    }
+
+# ==========================================================
+# DEBUG — CLEAR QUESTION CACHE (REMOVE LATER)
+# ==========================================================
+@router.post("/debug/clear-question-cache")
+def clear_question_cache():
+    from app.services.question_cache import get_exam_day_questions_cached
+
+    get_exam_day_questions_cached.cache_clear()
+
+    return {"status": "question cache cleared"}
