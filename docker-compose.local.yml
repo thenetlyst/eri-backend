@@ -1,0 +1,190 @@
+
+
+services:
+
+  # -------------------------
+  # 🗄️ DATABASE (SCRAM)
+  # -------------------------
+  exam_db:
+    image: postgres:15
+    container_name: exam_db
+    restart: always
+    environment:
+      POSTGRES_USER: exam_user
+      POSTGRES_PASSWORD: exam_password
+      POSTGRES_DB: exam_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c max_connections=400
+      -c password_encryption=scram-sha-256
+
+  # -------------------------
+  # ⚡ PGBOUNCER
+  # -------------------------
+  pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: eri-pgbouncer
+    restart: always
+    ports:
+      - "6432:5432"
+    environment:
+      DB_USER: exam_user
+      DB_PASSWORD: exam_password
+      DB_HOST: exam_db
+      DB_NAME: exam_platform
+
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 40
+      RESERVE_POOL_SIZE: 10
+
+      AUTH_TYPE: plain
+
+    depends_on:
+      exam_db:
+        condition: service_started
+
+  # -------------------------
+  # 🧱 MIGRATIONS
+  # -------------------------
+  migrations:
+    build: .
+    container_name: eri-migrations
+    depends_on:
+      exam_db:
+        condition: service_started
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+      echo '⏳ Waiting for Postgres...' &&
+      until pg_isready -h exam_db -p 5432 -U exam_user; do sleep 2; done &&
+      echo '🚀 Running migrations...' &&
+      alembic upgrade head &&
+      echo '✅ Migrations complete'
+      "
+
+  # -------------------------
+  # 🚀 BACKEND 1
+  # -------------------------
+  eri-backend-1:
+    build: .
+    container_name: eri-backend-1
+    ports:
+      - "8001:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      exam_db:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - ENABLE_API_STATS=false
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+      echo '⏳ Waiting for PostgreSQL...' &&
+      until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
+      echo '🚀 Starting backend 1...' &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
+      "
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # -------------------------
+  # 🚀 BACKEND 2
+  # -------------------------
+  eri-backend-2:
+    build: .
+    container_name: eri-backend-2
+    ports:
+      - "8002:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      exam_db:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - ENABLE_API_STATS=false
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+      echo '⏳ Waiting for PostgreSQL...' &&
+      until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
+      echo '🚀 Starting backend 2...' &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
+      "
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: eri-nginx
+
+    depends_on:
+      eri-backend-1:
+        condition: service_started
+      eri-backend-2:
+        condition: service_started
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+    restart: unless-stopped
+
+
+  # -------------------------
+  # ⚙️ WORKER
+  # -------------------------
+  eri-worker:
+    build: .
+    container_name: eri-worker
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+      echo '⏳ Waiting for PgBouncer...' &&
+      until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
+      echo '🚀 Starting worker...' &&
+      python -m app.workers.finalize_runner
+      "
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+ 
+
+volumes:
+  postgres_data:
+
+  
