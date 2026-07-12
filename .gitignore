@@ -6,6 +6,9 @@ __pycache__/
 # Environment
 .env
 
+# Production
+.env.production
+
 # Secrets
 firebase_service_account.json
 
