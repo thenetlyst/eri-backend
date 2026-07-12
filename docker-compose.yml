@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 services:
 
@@ -81,18 +81,18 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
-      pgbouncer:
+      exam_db:
         condition: service_started
     env_file:
       - .env
     environment:
       - ENABLE_API_STATS=false
-      - DATABASE_URL=postgresql://exam_user:exam_password@exam_db:5432/exam_platform
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
     volumes:
       - .:/app
     command: >
       sh -c "
-      echo '⏳ Waiting for PgBouncer...' &&
+      echo '⏳ Waiting for PostgreSQL...' &&
       until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
       echo '🚀 Starting backend 1...' &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
@@ -113,18 +113,18 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
-      pgbouncer:
+      exam_db:
         condition: service_started
     env_file:
       - .env
     environment:
       - ENABLE_API_STATS=false
-      - DATABASE_URL=postgresql://exam_user:exam_password@exam_db:5432/exam_platform
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
     volumes:
       - .:/app
     command: >
       sh -c "
-      echo '⏳ Waiting for PgBouncer...' &&
+      echo '⏳ Waiting for PostgreSQL...' &&
       until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
       echo '🚀 Starting backend 2...' &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
@@ -133,6 +133,25 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: eri-nginx
+
+    depends_on:
+      eri-backend-1:
+        condition: service_started
+      eri-backend-2:
+        condition: service_started
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+    restart: unless-stopped
+
 
   # -------------------------
   # ⚙️ WORKER
@@ -167,3 +186,5 @@ services:
 
 volumes:
   postgres_data:
+
+  
