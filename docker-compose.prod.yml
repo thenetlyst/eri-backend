@@ -59,8 +59,7 @@ services:
         condition: service_started
     env_file:
       - .env
-    volumes:
-      - .:/app
+
     command: >
       sh -c "
       echo '⏳ Waiting for Postgres...' &&
@@ -88,8 +87,9 @@ services:
     environment:
       - ENABLE_API_STATS=false
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
-    volumes:
-      - .:/app
+
+    restart: unless-stopped
+
     command: >
       sh -c "
       echo '⏳ Waiting for PostgreSQL...' &&
@@ -120,8 +120,9 @@ services:
     environment:
       - ENABLE_API_STATS=false
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
-    volumes:
-      - .:/app
+    
+    restart: unless-stopped
+
     command: >
       sh -c "
       echo '⏳ Waiting for PostgreSQL...' &&
@@ -168,8 +169,9 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
-    volumes:
-      - .:/app
+    
+    restart: unless-stopped
+
     command: >
       sh -c "
       echo '⏳ Waiting for PgBouncer...' &&
