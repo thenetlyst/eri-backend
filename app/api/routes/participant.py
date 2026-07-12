@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -20,12 +20,18 @@ def create_participant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 🔒 HARD BLOCK — disable unsafe endpoint completely
+    raise HTTPException(
+        status_code=403,
+        detail="Direct participant creation is disabled. Use enrollment."
+    )
 
+    # (This code remains for future rollback / debugging, but never executes)
     participant = Participant(
         id=uuid.uuid4(),
         user_id=current_user.id,
         challenge_id=payload.challenge_id,
-        participant_code=payload.participant_code,
+        participant_code="TEMP_BLOCKED",
         name=payload.name,
         college=payload.college,
         state=payload.state,

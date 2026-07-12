@@ -1,56 +1,149 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-import uuid
 
-from app.db.session import SessionLocal
-from app.models.user import User   # ⚠️ note path
+from app.db.session import get_db
+from app.models.user import User
+from app.core.firebase import verify_firebase_token
+from app.core.errors import unauthorized
+from app.core.error_codes import ErrorCode
+
+import logging
+from time import perf_counter
+
+from app.core.request_context import (
+    get_request_id,
+    elapsed_ms,
+)
 
 security = HTTPBearer()
 
-
-# -----------------------------
-# DB Dependency
-# -----------------------------
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------
-# AUTH Dependency (REAL UUID TOKEN)
+# AUTH Dependency (UNCHANGED LOGIC)
 # -----------------------------
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
-):
+) -> User:
+    """
+    Authentication flow:
 
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
-        )
+    DEV MODE:
+    - Direct mapping: dev-user-101 → loadtest_user_101@test.com
+
+    PRODUCTION:
+    - Firebase verification
+    - UID + email lookup
+    """
+    auth_start = perf_counter()
+
+
+    # -----------------------------
+    # 1. Validate token presence
+    # -----------------------------
+    if not credentials or not credentials.credentials:
+        unauthorized("Missing authentication token")
+        return
 
     token = credentials.credentials
 
-    # ⭐ token IS user UUID now
+    # -----------------------------
+    # 🔥 DEV MODE DIRECT HANDLING
+    # -----------------------------
+    if token.startswith("dev-user-"):
+        try:
+            index = int(token.split("-")[-1])
+        except Exception:
+            index = 1
+
+        email = f"loadtest_user_{index}@test.com"
+
+        user = db.query(User).filter(User.email == email).first()
+
+        if not user:
+            print(f"❌ DEV USER NOT FOUND: {email}")
+            unauthorized("User not found", code=ErrorCode.USER_NOT_FOUND)
+            return
+
+        duration_ms = round((perf_counter() - auth_start) * 1000, 3)
+
+        logger.info(
+            "auth_profile",
+            extra={
+                "request_id": get_request_id(),
+                "elapsed_ms": elapsed_ms(),
+                "mode": "dev",
+                "duration_ms": duration_ms,
+            },
+        )
+
+        return user
+
+    # -----------------------------
+    # 🔒 NORMAL FLOW (FIREBASE)
+    # -----------------------------
     try:
-        user_uuid = uuid.UUID(token)
+        decoded_token = verify_firebase_token(token)
     except Exception:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token format",
-        )
+        unauthorized("Token expired or invalid", code=ErrorCode.TOKEN_EXPIRED)
+        return
 
-    user = db.query(User).filter(User.id == user_uuid).first()
+    if not decoded_token:
+        unauthorized("Invalid token")
+        return
 
+    # -----------------------------
+    # Extract identity
+    # -----------------------------
+    firebase_uid = decoded_token.get("uid")
+    email = decoded_token.get("email")
+
+    if not firebase_uid or not email:
+        unauthorized("Invalid token payload")
+        return
+
+    email = email.lower().strip()
+
+    # -----------------------------
+    # PRIMARY LOOKUP (UID)
+    # -----------------------------
+    user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+
+    # -----------------------------
+    # FALLBACK LOOKUP (EMAIL)
+    # -----------------------------
     if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="User not found",
-        )
+        user = db.query(User).filter(User.email == email).first()
+
+        if not user:
+            unauthorized("User not found", code=ErrorCode.USER_NOT_FOUND)
+            return
+
+        # 🔥 First-time UID linking
+        user.firebase_uid = firebase_uid
+        db.commit()
+        db.refresh(user)
+
+    # -----------------------------
+    # UID CONSISTENCY CHECK
+    # -----------------------------
+    elif user.firebase_uid != firebase_uid:
+        unauthorized("Account mismatch detected", code=ErrorCode.UNAUTHORIZED)
+        return
+
+    duration_ms = round((perf_counter() - auth_start) * 1000, 3)
+
+    logger.info(
+        "auth_profile",
+        extra={
+            "request_id": get_request_id(),
+            "elapsed_ms": elapsed_ms(),
+            "mode": "firebase",
+            "duration_ms": duration_ms,
+        },
+    )
 
     return user

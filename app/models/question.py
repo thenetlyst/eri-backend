@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import UUID, ENUM
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-
+from sqlalchemy.dialects.postgresql import JSONB
 
 difficulty_enum = ENUM(
     "EASY",
@@ -72,5 +72,5 @@ class Question(Base):
     hint_penalty_percentage = Column(Numeric(5, 2), nullable=False)
 
     is_special = Column(Boolean, nullable=False)
-
+    content_json = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

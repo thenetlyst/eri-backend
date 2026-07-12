@@ -40,6 +40,7 @@ class RegistrationApplication(Base):
     name = Column(String, nullable=False)
     state = Column(String, nullable=False)
     college = Column(String, nullable=False)
+    graduation_year = Column(String, nullable=False)
 
     participant_code = Column(String, nullable=False, index=True)
 

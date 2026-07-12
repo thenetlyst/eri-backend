@@ -1,7 +1,5 @@
 # app/api/routes/question.py
 
-print("✅ QUESTION ROUTER FILE LOADED")
-
 import random
 import hashlib
 from datetime import datetime, timezone, timedelta
@@ -9,7 +7,8 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user
+from app.models.user import User
 from app.models.attempt import Attempt, AttemptStatus
 from app.models.attempt_answer import AttemptAnswer
 from app.services.attempt_service import finalize_attempt
@@ -20,7 +19,7 @@ from app.core.exceptions import (
     ForbiddenException,
 )
 
-router = APIRouter(prefix="/attempts", tags=["Questions"])
+router = APIRouter(tags=["Questions"])
 
 
 # ==========================================================
@@ -30,6 +29,7 @@ router = APIRouter(prefix="/attempts", tags=["Questions"])
 def list_questions(
     attempt_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     attempt = db.query(Attempt).filter(
         Attempt.id == attempt_id
@@ -37,7 +37,10 @@ def list_questions(
 
     if not attempt:
         raise NotFoundException("Attempt not found")
-
+    
+    if attempt.participant.user_id != current_user.id:
+        raise ForbiddenException("Unauthorized access to attempt")
+    
     if attempt.status == AttemptStatus.SUBMITTED:
         raise ForbiddenException("Attempt already completed")
 
@@ -45,7 +48,7 @@ def list_questions(
     cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
 
     # IMPORTANT → copy before use
-    questions = [q.copy() for q in cached_questions]
+    questions = [q.copy() for q in cached_questions.values()]
 
     answers = db.query(AttemptAnswer).filter(
         AttemptAnswer.attempt_id == attempt.id
@@ -97,6 +100,7 @@ def get_question(
     attempt_id: str,
     question_order: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
 
     now = datetime.now(timezone.utc)
@@ -107,6 +111,9 @@ def get_question(
 
     if not attempt:
         raise NotFoundException("Attempt not found")
+
+    if attempt.participant.user_id != current_user.id:
+        raise ForbiddenException("Unauthorized access to attempt")
 
     if attempt.status == AttemptStatus.SUBMITTED:
         raise ForbiddenException("Attempt already completed")
@@ -133,7 +140,7 @@ def get_question(
 
     # ⭐ CACHE HIT
     cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
-    questions = [q.copy() for q in cached_questions]
+    questions = [q.copy() for q in cached_questions.values()]
 
     question = next(
         (q for q in questions if q["question_order"] == question_order),
@@ -171,6 +178,10 @@ def get_question(
     is_answered = existing_answer is not None
     hint_used = existing_answer.hint_used if existing_answer else False
 
+    # ⭐ JSON content (new)
+    content = question.get("content_json")
+
+    # Fallback options (legacy)
     options = [
         {"key": "A", "text": question["option_a"]},
         {"key": "B", "text": question["option_b"]},
@@ -188,7 +199,13 @@ def get_question(
     return {
         "question_id": question["id"],
         "question_order": question["question_order"],
+
+        # ⭐ NEW JSON content
+        "content": content,
+
+        # fallback legacy fields
         "question_text": question["question_text"],
+
         "difficulty": question["difficulty"],
         "weight": question["weight"],
         "hint_penalty_percentage": question["hint_penalty_percentage"],
@@ -198,7 +215,6 @@ def get_question(
         "options": options,
         "remaining_time_seconds": max(remaining_time, 0),
     }
-
 # ==========================================================
 # DEBUG — CLEAR QUESTION CACHE (REMOVE LATER)
 # ==========================================================

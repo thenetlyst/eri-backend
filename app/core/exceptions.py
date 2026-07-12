@@ -2,7 +2,7 @@ from fastapi import HTTPException
 
 
 class ConflictException(HTTPException):
-    def __init__(self, detail: str):
+    def __init__(self, detail):
         super().__init__(status_code=409, detail=detail)
 
 

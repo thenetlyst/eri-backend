@@ -13,5 +13,5 @@ def log_attempt_event(db, attempt_id, question_id, event_type, client_ts=None):
         client_ts=client_ts,
     )
     db.add(ev)
-    db.commit()
+
     

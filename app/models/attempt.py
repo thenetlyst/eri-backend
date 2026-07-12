@@ -12,8 +12,10 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Index,
+    JSON,  # ⭐ snapshot stays JSON for now
 )
-from sqlalchemy.dialects.postgresql import UUID
+
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -34,7 +36,7 @@ class Attempt(Base):
         UniqueConstraint(
             "participant_id",
             "exam_day_id",
-            name="uq_participant_exam_day"
+            name="uq_participant_exam_day",
         ),
         Index("idx_attempt_exam_day", "exam_day_id"),
         Index("idx_attempt_participant", "participant_id"),
@@ -76,22 +78,23 @@ class Attempt(Base):
     submitted_at = Column(DateTime(timezone=True))
     total_time_seconds = Column(Integer)
 
-    raw_score = Column(
-        Numeric(10, 2),
-        nullable=False,
-        server_default="0",
-    )
+    raw_score = Column(Numeric(10, 2), nullable=False, server_default="0")
+    final_score = Column(Numeric(10, 2), nullable=False, server_default="0")
 
-    final_score = Column(
-        Numeric(10, 2),
-        nullable=False,
-        server_default="0",
-    )
+    # ⭐ IMMUTABLE FINALIZE SNAPSHOT (archive)
+    golden_snapshot = Column(JSON, nullable=True)
+
+    # ⭐ SEQUENCING SNAPSHOT (operational)
+    shuffle_seed = Column(String, nullable=True)
+    question_pool_ids = Column(JSONB, nullable=True)
 
     scoring_version = Column(Integer, nullable=False, default=1)
 
     hints_used_count = Column(Integer, nullable=False, default=0)
     attendance_flag = Column(Boolean, nullable=False, default=False)
+
+    # ⭐ idempotency guard
+    progress_applied = Column(Boolean, nullable=False, default=False)
 
     start_ip = Column(String)
     start_user_agent = Column(String)
@@ -101,19 +104,17 @@ class Attempt(Base):
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
-        nullable=False
+        nullable=False,
     )
 
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
-        nullable=False
+        nullable=False,
     )
-    # ---- Lifecycle navigation ----
-    current_index = Column(Integer, nullable=False, default=0)
 
+    current_index = Column(Integer, nullable=False, default=0)
     last_resumed_at = Column(DateTime(timezone=True), nullable=True)
-    
-    # 🔥 CRITICAL RELATIONSHIP
+
     participant = relationship("Participant", backref="attempts")

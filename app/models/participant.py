@@ -4,6 +4,7 @@ import enum
 from sqlalchemy import Column, String, Enum, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -23,10 +24,7 @@ class Participant(Base):
             "challenge_id",
             name="uq_user_challenge"
         ),
-        UniqueConstraint(
-            "participant_code",
-            name="uq_participant_code"
-        ),
+        # ❌ REMOVED participant_code constraint
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -38,6 +36,9 @@ class Participant(Base):
         nullable=False,
     )
 
+    # 🔗 relationship
+    user = relationship("User")
+
     # 🔑 challenge enrollment
     challenge_id = Column(
         UUID(as_uuid=True),
@@ -45,9 +46,9 @@ class Participant(Base):
         nullable=False,
     )
 
-    participant_code = Column(String, nullable=False)
+    # ❌ REMOVED participant_code column
 
-    # 🔥 profile snapshot (this fixes your router errors)
+    # 🔥 profile snapshot
     name = Column(String, nullable=False)
     college = Column(String, nullable=False)
     state = Column(String, nullable=False)

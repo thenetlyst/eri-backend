@@ -12,7 +12,7 @@ from app.models.challenge import Challenge, ChallengeStatus
 from app.core.config import settings
 from app.core.exceptions import ForbiddenException, NotFoundException
 
-router = APIRouter(prefix="/ranking", tags=["Ranking"])
+router = APIRouter(tags=["Ranking"])
 
 getcontext().prec = 12
 

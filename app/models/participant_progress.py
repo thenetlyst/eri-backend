@@ -11,6 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 
 from app.db.base import Base
 
@@ -69,10 +70,27 @@ class ParticipantProgress(Base):
         default=False,
     )
 
+    # -----------------------------------------
+    # Engine semantic timestamp (existing)
+    # -----------------------------------------
     last_updated = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    # -----------------------------------------
+    # AUDIT TIMESTAMPS (NEW)
+    # -----------------------------------------
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     __table_args__ = (

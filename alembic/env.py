@@ -1,10 +1,18 @@
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import pool, create_engine
 from alembic import context
 
 import sys
 import os
+
+# -----------------------------
+# LOAD ENV
+# -----------------------------
+from dotenv import load_dotenv
+load_dotenv(override=False)
+
+# Ensure project root is included
 sys.path.append(os.getcwd())
 
 # Alembic Config object
@@ -21,12 +29,18 @@ from app import models
 target_metadata = Base.metadata
 
 
-# ---------------- OFFLINE ----------------
-
+# -----------------------------
+# OFFLINE MODE
+# -----------------------------
 def run_migrations_offline() -> None:
     """Run migrations in offline mode."""
 
     url = os.getenv("DATABASE_URL")
+
+    if not url:
+        raise RuntimeError("❌ DATABASE_URL not found in environment")
+
+    print("🔥 ALEMBIC OFFLINE DB:", url)
 
     context.configure(
         url=url,
@@ -39,14 +53,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-# ---------------- ONLINE ----------------
-
+# -----------------------------
+# ONLINE MODE
+# -----------------------------
 def run_migrations_online() -> None:
-    """Run migrations in online mode using DATABASE_URL env."""
-
-    from sqlalchemy import create_engine
+    """Run migrations in online mode."""
 
     database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("❌ DATABASE_URL not found in environment")
+
+    print("🔥 ALEMBIC USING DB:", database_url)
 
     connectable = create_engine(
         database_url,
@@ -63,8 +81,9 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-# ---------------- ENTRY ----------------
-
+# -----------------------------
+# ENTRY POINT
+# -----------------------------
 if context.is_offline_mode():
     run_migrations_offline()
 else:

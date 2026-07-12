@@ -43,17 +43,20 @@ def enroll(
     if existing_participant:
         return EnrollmentResponse(
             participant_id=existing_participant.id,
-            participant_code=existing_participant.participant_code,
+            participant_code=current_user.participant_code,  # ✅ FIXED
             challenge_id=existing_participant.challenge_id,
         )
 
-    # 3️⃣ Create participant
+    # 3️⃣ Create participant (NO REAL CODE HERE ANYMORE)
     participant = Participant(
         user_id=current_user.id,
         challenge_id=registration.challenge_id,
-        participant_code=registration.participant_code,
+       # participant_code="LEGACY",  # ✅ FIXED
+
+        name=registration.name,
         state=registration.state,
         college=registration.college,
+        graduation_year=registration.graduation_year,
     )
 
     db.add(participant)
@@ -66,6 +69,6 @@ def enroll(
 
     return EnrollmentResponse(
         participant_id=participant.id,
-        participant_code=participant.participant_code,
+        participant_code=current_user.participant_code,  # ✅ FIXED
         challenge_id=participant.challenge_id,
     )

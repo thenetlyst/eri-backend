@@ -1,10 +1,12 @@
-from pydantic import BaseModel
 from uuid import UUID
+from pydantic import BaseModel
+from typing import Optional
+from ._strict import StrictRequest
 
 
-class AnswerSubmitRequest(BaseModel):
+class AnswerSubmitRequest(StrictRequest):
     question_id: UUID
-    selected_option: str
+    selected_option: Optional[str] = None   # 🔥 FIXED
     hint_used: bool = False
 
 

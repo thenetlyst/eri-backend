@@ -8,7 +8,6 @@ from uuid import UUID
 
 class ParticipantCreate(BaseModel):
     challenge_id: UUID
-    participant_code: str
     name: str
     college: str
     state: str

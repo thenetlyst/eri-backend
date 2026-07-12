@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 from uuid import UUID
+from ._strict import StrictRequest
 
-
-class AttemptStartRequest(BaseModel):
+class AttemptStartRequest(StrictRequest):
     exam_day_id: UUID
 
 

@@ -1,27 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
+import os
 
-from app.api.deps import get_db
-from app.models.user import User
+router = APIRouter()
 
-router = APIRouter(tags=["Dev Auth"])
-
-
-class DevLoginRequest(BaseModel):
-    email: str
+ENV = os.getenv("ENVIRONMENT", "dev")
 
 
 @router.post("/dev-login")
-def dev_login(payload: DevLoginRequest, db: Session = Depends(get_db)):
+def dev_login():
+    """
+    Temporary compatibility endpoint for frontend.
+    Disabled in production.
+    """
 
-    user = db.query(User).filter(User.email == payload.email).first()
+    if ENV != "dev":
+        raise HTTPException(status_code=403, detail="Disabled in production")
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # ⭐ CRITICAL — token = real user UUID
     return {
-        "access_token": str(user.id),
+        "access_token": "anything",
         "token_type": "bearer"
     }

@@ -41,32 +41,92 @@ class AttemptAnswer(Base):
         nullable=False,
     )
 
+    # -----------------------------
+    # CORE ANSWER DATA
+    # -----------------------------
     selected_option = Column(String(1), nullable=False)
 
-    is_correct = Column(Boolean, nullable=False)
+    is_correct = Column(
+        Boolean,
+        nullable=False,
+        default=False,   # ✅ SAFE DEFAULT
+    )
 
-    hint_used = Column(Boolean, nullable=False, default=False)
+    answered_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    # -----------------------------
+    # SCORING (FROZEN SNAPSHOT)
+    # -----------------------------
+    raw_score = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,   # ✅ SAFE DEFAULT
+    )
+
+    effective_score = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,   # ✅ SAFE DEFAULT
+    )
+
+    is_special = Column(
+        Boolean,
+        nullable=False,
+        default=False,   # ✅ SAFE DEFAULT
+    )
+
+    weight_used = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,   # ✅ SAFE DEFAULT
+    )
+
+    # -----------------------------
+    # HINT TRACKING
+    # -----------------------------
+    hint_used = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     hint_used_at = Column(DateTime(timezone=True))
 
-    answered_at = Column(DateTime(timezone=True), nullable=False)
+    first_hint_opened_at = Column(DateTime(timezone=True))
 
-    raw_score = Column(Numeric(10, 2), nullable=False)
-    effective_score = Column(Numeric(10, 2), nullable=False)
+    hint_open_count = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    time_to_first_hint_seconds = Column(Integer)
+
+    # -----------------------------
+    # NAVIGATION TRACKING
+    # -----------------------------
+    visited_at = Column(DateTime(timezone=True))
+    last_viewed_at = Column(DateTime(timezone=True))
+
+    marked_for_review = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    # -----------------------------
+    # AUDIT / SYSTEM
+    # -----------------------------
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
 
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
     )
-
-    # ---- Hint replay ----
-    first_hint_opened_at = Column(DateTime(timezone=True))
-    hint_open_count = Column(Integer, nullable=False, default=0)
-    time_to_first_hint_seconds = Column(Integer)
-
-    # ---- Navigation tracking ----
-    visited_at = Column(DateTime(timezone=True))
-    last_viewed_at = Column(DateTime(timezone=True))
-    marked_for_review = Column(Boolean, nullable=False, default=False)

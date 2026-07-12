@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user
+from app.models.user import User
 from app.models.attempt import Attempt
 from app.models.attempt_answer import AttemptAnswer
 from app.models.question import Question
@@ -12,20 +13,38 @@ router = APIRouter()
 
 
 @router.get("/{attempt_id}/reconstruct")
-def reconstruct_attempt(attempt_id: UUID, db: Session = Depends(get_db)):
-    attempt = db.query(Attempt).filter(Attempt.id == attempt_id).first()
+def reconstruct_attempt(
+    attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    attempt = (
+        db.query(Attempt)
+        .filter(Attempt.id == attempt_id)
+        .first()
+    )
 
     if not attempt:
-        raise HTTPException(status_code=404, detail="Attempt not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Attempt not found",
+        )
 
-    # ✅ fetch answers
+    # 🔒 Ownership check
+    if attempt.participant.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Unauthorized access to attempt",
+        )
+
+    # Fetch answers
     answers = (
         db.query(AttemptAnswer)
-        .filter(AttemptAnswer.attempt_id == attempt_id)
+        .filter(AttemptAnswer.attempt_id == attempt.id)
         .all()
     )
 
-    # ✅ fetch questions for this exam day
+    # Fetch questions
     questions = (
         db.query(Question)
         .filter(Question.exam_day_id == attempt.exam_day_id)
@@ -34,9 +53,9 @@ def reconstruct_attempt(attempt_id: UUID, db: Session = Depends(get_db)):
     )
 
     snapshot = build_attempt_snapshot(
-        attempt,
-        questions,
-        answers,
+        attempt=attempt,
+        questions=questions,
+        answers=answers,
     )
 
     return {

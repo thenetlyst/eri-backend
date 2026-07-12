@@ -1,7 +1,10 @@
 import uuid
+from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
 import logging
+
+from app.core.request_trace import RequestTrace
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -18,359 +21,680 @@ from app.models.participant_progress import ParticipantProgress
 from app.models.challenge import Challenge, ChallengeStatus
 from app.models.user import User
 from app.services.attempt_service import finalize_attempt
+from app.services.question_cache import get_exam_day_questions_cached
+
 from app.schemas.attempt import AttemptStartRequest, AttemptStartResponse
 from app.schemas.answer import AnswerSubmitRequest, AnswerSubmitResponse
-from app.core.exceptions import (
-    NotFoundException,
-    ForbiddenException,
-    ConflictException,
-)
+
+# ✅ NEW CONTRACT
+from app.core.errors import forbidden, not_found, conflict
+from app.core.error_codes import ErrorCode
+
 from app.services.attempt_event_service import (
     log_attempt_event,
     EVENT_ANSWER_CHANGED,
     EVENT_HINT_USED,
-)
-
-from pydantic import BaseModel
-from app.services.attempt_event_service import (
-    log_attempt_event,
     EVENT_QUESTION_VIEWED,
 )
 
+from app.schemas._strict import StrictRequest
+from datetime import timedelta
+
+from sqlalchemy.dialects.postgresql import insert
+
+# Allow small real-world tolerance
+grace_seconds = 30
+
+
+
 router = APIRouter(tags=["Attempts"])
 logger = logging.getLogger(__name__)
-class QuestionViewRequest(BaseModel):
-    question_id: str
+
+
+class QuestionViewRequest(StrictRequest):
+    question_id: UUID
+
 
 # ==========================================================
 # START ATTEMPT
 # ==========================================================
-
 @router.post("/start", response_model=AttemptStartResponse)
 def start_attempt(
     payload: AttemptStartRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from sqlalchemy.dialects.postgresql import insert
 
-    exam_day = db.query(ExamDay).filter(ExamDay.id == payload.exam_day_id).first()
-    if not exam_day:
-        raise NotFoundException("Exam day not found")
-
-    challenge = db.query(Challenge).filter(
-        Challenge.id == exam_day.challenge_id
-    ).first()
-
-    if not challenge:
-        raise NotFoundException("Challenge not found")
-
-    if challenge.status != ChallengeStatus.ACTIVE:
-        raise ForbiddenException("Challenge not active")
-
-    participant = (
-        db.query(Participant)
-        .filter(
-            Participant.user_id == current_user.id,
-            Participant.challenge_id == challenge.id,
-        )
-        .first()
-    )
-
-    if not participant:
-        raise ForbiddenException("User not enrolled for this challenge")
-
-    if participant.account_status != AccountStatus.ACTIVE:
-        raise ForbiddenException("Participant account not active")
-
-    now = datetime.now(timezone.utc)
-
-    if now < exam_day.window_start or now > exam_day.window_end:
-        raise ForbiddenException("Exam window not active")
-
-    if exam_day.is_force_locked:
-        raise ForbiddenException("Exam is force locked")
-
-    existing_attempt = db.query(Attempt).filter(
-        Attempt.participant_id == participant.id,
-        Attempt.exam_day_id == exam_day.id
-    ).first()
-
-    if existing_attempt:
-        raise ConflictException("Attempt already exists for this exam day")
-
-    base_count = db.query(func.count(Question.id)).filter(
-        Question.exam_day_id == exam_day.id,
-        Question.is_special == False
-    ).scalar()
-
-    if base_count == 0:
-        raise ForbiddenException("No base questions configured for this exam day")
-
-    progress = db.query(ParticipantProgress).filter(
-        ParticipantProgress.challenge_id == challenge.id,
-        ParticipantProgress.participant_id == participant.id,
-    ).first()
-
-    special_unlocked = False
-    if progress and progress.days_completed >= 2:
-        special_unlocked = progress.eligible_for_bonus_next_day
-
-    base_duration = db.query(
-        func.coalesce(func.sum(Question.allocated_time_seconds), 0)
-    ).filter(
-        Question.exam_day_id == exam_day.id,
-        Question.is_special == False
-    ).scalar()
-
-    special_duration = 0
-
-    if special_unlocked:
-        special_duration = db.query(
-            func.coalesce(func.sum(Question.allocated_time_seconds), 0)
-        ).filter(
-            Question.exam_day_id == exam_day.id,
-            Question.is_special == True
-        ).scalar()
-
-    total_allowed = int(base_duration + special_duration)
-
-    attempt = Attempt(
-        id=uuid.uuid4(),
-        challenge_id=challenge.id,
-        participant_id=participant.id,
-        exam_day_id=exam_day.id,
-        status=AttemptStatus.IN_PROGRESS,
-        special_unlocked=special_unlocked,
-        started_at=now,
-        allowed_duration_seconds=total_allowed,
-        hints_used_count=0,
-        attendance_flag=True,
-    )
-
-    db.add(attempt)
+    trace = RequestTrace()
 
     try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise ConflictException("Attempt already exists")
 
-    db.refresh(attempt)
+        # ==========================================================
+        # VALIDATIONS
+        # ==========================================================
+        with trace.measure("exam_day_lookup"):
+            exam_day = (
+                db.query(ExamDay)
+                .filter(ExamDay.id == payload.exam_day_id)
+                .first()
+            )
 
-    return AttemptStartResponse(
-        attempt_id=attempt.id,
-        allowed_duration_seconds=total_allowed,
-        special_unlocked=special_unlocked,
-    )
+        if not exam_day:
+            not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Exam day not found")
+
+        with trace.measure("challenge_lookup"):
+            challenge = (
+                db.query(Challenge)
+                .filter(Challenge.id == exam_day.challenge_id)
+                .first()
+            )
+
+        if not challenge:
+            not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Challenge not found")
+
+        if challenge.status != ChallengeStatus.ACTIVE:
+            forbidden(ErrorCode.FORBIDDEN, "Challenge not active")
+
+   # print("----- DEBUG START -----")
+   # print("current_user.id:", current_user.id)
+   # print("type(current_user.id):", type(current_user.id))
+   # print("challenge.id:", challenge.id)
+   # print("type(challenge.id):", type(challenge.id))
+   # print("----- DEBUG END -----")
+
+        with trace.measure("participant_lookup"):
+            participant = (
+                db.query(Participant)
+                .filter(
+                    Participant.user_id == current_user.id,
+                    Participant.challenge_id == challenge.id,
+                )
+                .first()
+            )
+
+        if not participant:
+            forbidden(ErrorCode.FORBIDDEN, "User not enrolled for this challenge")
+
+        if participant.account_status != AccountStatus.ACTIVE:
+            forbidden(ErrorCode.FORBIDDEN, "Participant account not active")
+
+        now = datetime.now(timezone.utc)
+
+        if now < exam_day.window_start - timedelta(seconds=grace_seconds) or \
+            now > exam_day.window_end + timedelta(seconds=grace_seconds):
+            forbidden(ErrorCode.WINDOW_CLOSED, "Exam window not active")
+
+        if exam_day.is_force_locked:
+            forbidden(ErrorCode.FORCE_LOCKED, "Exam is force locked")
+
+        # ==========================================================
+        # PROGRESS
+        # ==========================================================
+        with trace.measure("progress_lookup"):
+            progress = (
+                db.query(ParticipantProgress)
+                .filter(
+                    ParticipantProgress.challenge_id == challenge.id,
+                    ParticipantProgress.participant_id == participant.id,
+                )
+                .first()
+            )
+
+        special_unlocked = False
+        if progress and progress.days_completed >= 2:
+            special_unlocked = progress.eligible_for_bonus_next_day
+
+        # ==========================================================
+        # QUESTIONS (CACHE)
+        # ==========================================================
+        with trace.measure("question_cache"):
+            questions_map = get_exam_day_questions_cached(str(exam_day.id))
+
+        questions = list(questions_map.values())
+
+        base_ids = sorted([q["id"] for q in questions if not q["is_special"]])
+        bonus_ids = sorted([q["id"] for q in questions if q["is_special"]])
+
+        if not base_ids:
+            forbidden(ErrorCode.INVALID_ATTEMPT, "No base questions configured for this exam day")
+
+        total_allowed = int(
+            sum(
+                q["allocated_time_seconds"]
+                for q in questions
+                if (not q["is_special"]) or special_unlocked
+            )
+        )
+
+        seed = str(uuid.uuid4())
+
+        # ==========================================================
+        # 🔥 ATOMIC INSERT (OPTIMIZED)
+        # ==========================================================
+        stmt = insert(Attempt).values(
+            id=uuid.uuid4(),
+            challenge_id=challenge.id,
+            participant_id=participant.id,
+            exam_day_id=exam_day.id,
+            status=AttemptStatus.IN_PROGRESS,
+            special_unlocked=special_unlocked,
+            started_at=now,
+            allowed_duration_seconds=total_allowed,
+            hints_used_count=0,
+            attendance_flag=True,
+            shuffle_seed=seed,
+            question_pool_ids={
+                "base": base_ids,
+                "bonus": bonus_ids,
+            },
+        )
+
+        stmt = stmt.on_conflict_do_nothing(
+            constraint="uq_participant_exam_day"
+        ).returning(
+            Attempt.id,
+            Attempt.allowed_duration_seconds,
+            Attempt.special_unlocked,
+            Attempt.status,
+        )
+
+        with trace.measure("attempt_insert"):
+            result = db.execute(stmt)
+
+
+        with trace.measure("returning_fetch"):
+            row = result.fetchone()
+    
+        with trace.measure("commit"):
+            db.commit()
+
+
+        # ==========================================================
+        # ✅ CASE 1: NEW ATTEMPT CREATED
+        # ==========================================================
+        if row:
+            if row.status == AttemptStatus.SUBMITTED:
+                forbidden(
+                    ErrorCode.ALREADY_COMPLETED,
+                    "Attempt already submitted",
+                    meta={"attempt_id": str(row.id)}
+                )
+            logger.info(
+                "start_attempt_profile",
+                extra={
+                    "participant_id": str(participant.id),
+                    "attempt_created": True,
+                    **trace.summary(),
+                },
+            )
+
+
+
+            return AttemptStartResponse(
+                attempt_id=row.id,
+                allowed_duration_seconds=row.allowed_duration_seconds,
+                special_unlocked=row.special_unlocked,
+            )
+
+        # ==========================================================
+        # ✅ CASE 2: EXISTING ATTEMPT (FALLBACK)
+        # ==========================================================
+        attempt = (
+            db.query(Attempt)
+            .filter(
+                Attempt.participant_id == participant.id,
+                Attempt.exam_day_id == exam_day.id,
+            )
+            .first()
+        )
+
+        if not attempt:
+            forbidden(
+                ErrorCode.DATABASE_ERROR,
+                "Failed to create or fetch attempt"
+            )
+
+        if attempt.status == AttemptStatus.SUBMITTED:
+            forbidden(
+                ErrorCode.ALREADY_COMPLETED,
+                "Attempt already submitted",
+                meta={"attempt_id": str(attempt.id)}
+            )
+
+        logger.info(
+            "start_attempt_profile",
+            extra={
+                "participant_id": str(participant.id),
+                "attempt_created": False,
+                **trace.summary(),
+            },
+        )
+
+
+        return AttemptStartResponse(
+            attempt_id=attempt.id,
+            allowed_duration_seconds=attempt.allowed_duration_seconds,
+            special_unlocked=attempt.special_unlocked,
+        )
+    except Exception:
+        logger.exception(
+            "start_attempt_failed",
+            extra=trace.summary(),
+        )
+        raise
 
 
 # ==========================================================
-# SUBMIT ANSWER (RACE SAFE)
+# SUBMIT ANSWER
 # ==========================================================
+#from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 @router.post("/{attempt_id}/submit-answer", response_model=AnswerSubmitResponse)
 def submit_answer(
-    attempt_id: str,
+    attempt_id: UUID,
     payload: AnswerSubmitRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
 
+    trace = RequestTrace()
     now = datetime.now(timezone.utc)
 
-    attempt = (
-        db.query(Attempt)
-        .filter(Attempt.id == attempt_id)
-        .with_for_update()
-        .first()
-    )
-
-    if not attempt:
-        raise NotFoundException("Attempt not found")
-
-    if attempt.participant.user_id != current_user.id:
-        raise ForbiddenException("Unauthorized attempt access")
-
-    if attempt.status != AttemptStatus.IN_PROGRESS:
-        raise ForbiddenException("Attempt is not active")
-
-    elapsed_seconds = int((now - attempt.started_at).total_seconds())
-
-    if elapsed_seconds > attempt.allowed_duration_seconds:
-        finalize_attempt(db, attempt)
-        db.commit()
-        raise ForbiddenException("Attempt time expired")
-
-    question = db.query(Question).filter(
-        Question.id == payload.question_id,
-        Question.exam_day_id == attempt.exam_day_id,
-    ).first()
-
-    if not question:
-        raise NotFoundException("Question not found")
-
-    existing_answer = db.query(AttemptAnswer).filter(
-        AttemptAnswer.attempt_id == attempt.id,
-        AttemptAnswer.question_id == question.id,
-    ).first()
-
-    hint_already_used = existing_answer.hint_used if existing_answer else False
-    hint_used_final = hint_already_used or payload.hint_used
-
-    if payload.hint_used and not hint_already_used:
-        attempt.hints_used_count += 1
-
-    is_correct = payload.selected_option == question.correct_option
-    raw_score = question.weight if is_correct else Decimal("0")
-    effective_score = raw_score
-
-    if is_correct and hint_used_final:
-        penalty = raw_score * (
-            question.hint_penalty_percentage / Decimal("100")
-        )
-        effective_score = raw_score - penalty
+    # ✅ PRE-INITIALIZE
+    is_active = False
+    total_hints_used = 0
 
     try:
-        if existing_answer:
-            existing_answer.selected_option = payload.selected_option
-            existing_answer.is_correct = is_correct
-            existing_answer.hint_used = hint_used_final
-            existing_answer.raw_score = raw_score
-            existing_answer.effective_score = effective_score
-            existing_answer.answered_at = now
-        else:
-            new_answer = AttemptAnswer(
-                attempt_id=attempt.id,
-                question_id=question.id,
-                selected_option=payload.selected_option,
-                is_correct=is_correct,
-                hint_used=hint_used_final,
-                hint_used_at=now if hint_used_final else None,
-                answered_at=now,
-                raw_score=raw_score,
-                effective_score=effective_score,
+        # ==========================================================
+        # FETCH ATTEMPT (OPTIMIZED: JOINEDLOAD → avoids extra query)
+        # ==========================================================
+        with trace.measure("attempt_lookup"):
+            attempt = (
+                db.query(Attempt)
+                .options(joinedload(Attempt.participant))
+                .filter(Attempt.id == attempt_id)
+                .first()
             )
-            db.add(new_answer)
 
-        db.commit()
+        if not attempt:
+            not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Attempt not found")
+
+        if attempt.participant.user_id != current_user.id:
+            forbidden(ErrorCode.FORBIDDEN, "Unauthorized attempt access")
+
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            forbidden(ErrorCode.ATTEMPT_NOT_ACTIVE, "Attempt is not active")
+
+        # ==========================================================
+        # TIME CHECK
+        # ==========================================================
+        elapsed_seconds = int((now - attempt.started_at).total_seconds())
+
+        if elapsed_seconds >= attempt.allowed_duration_seconds:
+            finalize_attempt(db, attempt)
+            db.commit()
+            forbidden(ErrorCode.ATTEMPT_EXPIRED, "Attempt time expired")
+
+        # ==========================================================
+        # FETCH QUESTION FROM CACHE (NO DB HIT)
+        # ==========================================================
+        
+        with trace.measure("question_cache"):
+            questions_map = get_exam_day_questions_cached(str(attempt.exam_day_id))
+            question = questions_map.get(str(payload.question_id))
+
+        if not question:
+            not_found(ErrorCode.QUESTION_NOT_FOUND, "Question not found")
+
+        # ==========================================================
+        # VALIDATE QUESTION IN ATTEMPT POOL
+        # ==========================================================
+        with trace.measure("business_logic"):
+
+            pool = attempt.question_pool_ids or {}
+            allowed_ids = set(pool.get("base", [])) | set(pool.get("bonus", []))
+
+            if str(payload.question_id) not in allowed_ids: 
+                forbidden(
+                    ErrorCode.INVALID_QUESTION_ACCESS,
+                    "Question not part of attempt pool",
+                )
+
+            # ==========================================================
+            # EXISTING ANSWER
+            # ==========================================================
+
+                
+            existing_answer = (
+                db.query(AttemptAnswer)
+                .filter(
+                    AttemptAnswer.attempt_id == attempt.id,
+                    AttemptAnswer.question_id == payload.question_id,
+                )
+                .first()
+            )
+
+            hint_already_used = existing_answer.hint_used if existing_answer else False
+            hint_used_final = hint_already_used or payload.hint_used
+
+            selected = payload.selected_option
+
+            if selected and "_" in selected:
+                try:
+                    selected_key = selected.split("_")[-1]
+                except Exception:
+                    selected_key = None
+            else:
+                selected_key = selected
+
+            previous_selected = (
+                existing_answer.selected_option
+                if existing_answer
+                else ""
+            )
+
+            current_selected = selected_key or ""
+
+            answer_changed = previous_selected != current_selected
+
+            is_correct = (
+                selected_key is not None
+                and selected_key == question["correct_option"]
+            )
+
+            weight = Decimal(str(question["weight"]))
+            penalty_pct = Decimal(str(question["hint_penalty_percentage"]))
+
+            raw_score = weight if is_correct else Decimal("0")
+            effective_score = raw_score
+
+            if is_correct and hint_used_final:
+                penalty = raw_score * (penalty_pct / Decimal("100"))
+                effective_score = raw_score - penalty
+
+        # ==========================================================
+        # UPSERT ANSWER (UNCHANGED LOGIC)
+        # ==========================================================
+        stmt = insert(AttemptAnswer).values(
+            attempt_id=attempt.id,
+            question_id=payload.question_id,
+            selected_option=selected_key or "",
+            is_correct=is_correct,
+            hint_used=hint_used_final,
+            hint_used_at=(
+                now if (payload.hint_used and not hint_already_used)
+                else (existing_answer.hint_used_at if existing_answer else None)
+            ),
+            answered_at=now,
+            raw_score=raw_score,
+            effective_score=effective_score,
+            is_special=question["is_special"],
+            weight_used=weight,
+            first_hint_opened_at=(
+                now
+                if (
+                    payload.hint_used
+                    and (
+                        not existing_answer
+                        or existing_answer.first_hint_opened_at is None
+                    )
+                )
+                else (
+                    existing_answer.first_hint_opened_at
+                    if existing_answer
+                    else None
+                )
+            ),
+            time_to_first_hint_seconds=(
+                int((now - attempt.started_at).total_seconds())
+                if (
+                    payload.hint_used
+                    and attempt.started_at
+                    and (
+                        not existing_answer
+                        or existing_answer.time_to_first_hint_seconds is None
+                    )
+                )
+                else (
+                    existing_answer.time_to_first_hint_seconds
+                    if existing_answer
+                    else None
+                )
+            ),
+        )
+
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["attempt_id", "question_id"],
+            set_={
+                "selected_option": (
+                    selected_key
+                    if selected_key is not None
+                    else (
+                        existing_answer.selected_option
+                        if existing_answer
+                        else ""
+                    )
+                ),
+                "is_correct": is_correct,
+                "hint_used": hint_used_final,
+                "answered_at": now,
+                "raw_score": raw_score,
+                "effective_score": effective_score,
+                "hint_used_at": (
+                    now if (payload.hint_used and not hint_already_used)
+                    else (existing_answer.hint_used_at if existing_answer else None)
+                ),
+                "first_hint_opened_at": (
+                    now
+                    if (
+                        payload.hint_used
+                        and (
+                            not existing_answer
+                            or existing_answer.first_hint_opened_at is None
+                        )
+                    )
+                    else (
+                        existing_answer.first_hint_opened_at
+                        if existing_answer
+                        else None
+                    )
+                ),
+                "time_to_first_hint_seconds": (
+                    int((now - attempt.started_at).total_seconds())
+                    if (
+                        payload.hint_used
+                        and attempt.started_at
+                        and (
+                            not existing_answer
+                            or existing_answer.time_to_first_hint_seconds is None
+                        )
+                    )
+                    else (
+                        existing_answer.time_to_first_hint_seconds
+                        if existing_answer
+                        else None
+                    )
+                ),
+            },
+        )
+
+
+        with trace.measure("answer_upsert"):
+            db.execute(stmt)
+        # ==========================================================
+        # HINT COUNTER (UNCHANGED LOGIC)
+        # ==========================================================
+        if payload.hint_used and not hint_already_used:
+            attempt.hints_used_count = (attempt.hints_used_count or 0) + 1
+
+        # ==========================================================
+        # CAPTURE BEFORE COMMIT
+        # ==========================================================
+        is_active = attempt.status == AttemptStatus.IN_PROGRESS
+        total_hints_used = attempt.hints_used_count or 0
+
+        with trace.measure("commit"):
+            db.commit()
 
     except IntegrityError:
         db.rollback()
+        conflict(ErrorCode.DATABASE_ERROR, "Answer submission conflict")
 
-        existing_answer = db.query(AttemptAnswer).filter(
-            AttemptAnswer.attempt_id == attempt.id,
-            AttemptAnswer.question_id == question.id,
-        ).first()
-
-        if existing_answer:
-            existing_answer.selected_option = payload.selected_option
-            existing_answer.is_correct = is_correct
-            existing_answer.hint_used = hint_used_final
-            existing_answer.raw_score = raw_score
-            existing_answer.effective_score = effective_score
-            existing_answer.answered_at = now
-            db.commit()
-
+    except Exception as e:
+        db.rollback()
+        raise e
     # ==========================================================
-    # EVENT LOGGING — ANSWER_CHANGED + HINT_USED
+    # EVENT LOGGING
     # ==========================================================
-    if attempt.status == AttemptStatus.IN_PROGRESS:
-        log_attempt_event(
-            db,
-            attempt_id=attempt.id,
-            question_id=question.id,
-            event_type=EVENT_ANSWER_CHANGED,
-        )
+    with trace.measure("event_logging"):
 
-        if payload.hint_used and not hint_already_used:
-            log_attempt_event(
-                db,
-                attempt_id=attempt.id,
-                question_id=question.id,
-                event_type=EVENT_HINT_USED,
-            )
+        if is_active:
 
-        db.commit()  # ⭐ critical — persist events
+            try:
+
+                if answer_changed:
+                    log_attempt_event(
+                        db,
+                        attempt.id,
+                        payload.question_id,
+                        EVENT_ANSWER_CHANGED,
+                    )
+
+                if payload.hint_used and not hint_already_used:
+                    log_attempt_event(
+                        db,
+                        attempt.id,
+                        payload.question_id,
+                        EVENT_HINT_USED,
+                    )
+
+            except Exception:
+                logger.exception("Failed to log attempt events")
+
+    logger.info(
+        "submit_answer_profile",
+        extra={
+            "attempt_id": str(attempt.id),
+            **trace.summary(),
+        },
+    )
+
+    logger.info(
+        "request_trace",
+        extra=trace.summary(),
+    )
 
     return AnswerSubmitResponse(
         is_correct=is_correct,
         raw_score=float(raw_score),
         effective_score=float(effective_score),
-        total_hints_used=attempt.hints_used_count,
+        total_hints_used=total_hints_used,
     )
-
 # ==========================================================
 # FINALIZE ATTEMPT
 # ==========================================================
 
 @router.post("/{attempt_id}/finalize")
 def finalize_attempt_endpoint(
-    attempt_id: str,
+    attempt_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Fully finalize an attempt.
+
+    Manual submissions immediately execute the canonical
+    finalization pipeline.
+    """
 
     attempt = (
         db.query(Attempt)
-        .filter(Attempt.id == attempt_id)
+        .filter(
+            Attempt.id == attempt_id,
+            Attempt.participant.has(user_id=current_user.id),
+        )
         .with_for_update()
         .first()
     )
 
-    if not attempt:
-        raise NotFoundException("Attempt not found")
-
-    if attempt.participant.user_id != current_user.id:
-        raise ForbiddenException("Unauthorized attempt access")
+    if attempt is None:
+        not_found(
+            ErrorCode.ATTEMPT_NOT_FOUND,
+            "Attempt not found",
+        )
 
     if attempt.status == AttemptStatus.SUBMITTED:
         return {
-            "message": "Attempt already finalized",
-            "attempt_id": str(attempt.id),
-            "raw_score": float(attempt.raw_score or 0),
-            "final_score": float(attempt.final_score or 0),
+            "message": "Attempt already submitted"
         }
 
+    if attempt.status != AttemptStatus.IN_PROGRESS:
+        forbidden(
+            ErrorCode.INVALID_ATTEMPT_STATE,
+            "Attempt is not in progress",
+        )
+
     finalize_attempt(db, attempt)
+
     db.commit()
-    db.refresh(attempt)
 
     return {
-        "message": "Attempt finalized successfully",
-        "attempt_id": str(attempt.id),
-        "raw_score": float(attempt.raw_score or 0),
-        "final_score": float(attempt.final_score or 0),
-        "total_time_seconds": attempt.total_time_seconds,
-        "hints_used": attempt.hints_used_count,
+        "message": "Submission accepted"
     }
-
-
 # ==========================================================
 # RESUME ATTEMPT
 # ==========================================================
-
 @router.get("/{attempt_id}/resume")
 def resume_attempt(
-    attempt_id: str,
+    attempt_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.utils.seeded_order import build_attempt_order
 
     now = datetime.now(timezone.utc)
 
     attempt = db.query(Attempt).filter(Attempt.id == attempt_id).first()
 
     if not attempt:
-        raise NotFoundException("Attempt not found")
+        not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Attempt not found")
 
     if attempt.participant.user_id != current_user.id:
-        raise ForbiddenException("Unauthorized attempt access")
+        forbidden(ErrorCode.FORBIDDEN, "Unauthorized attempt access")
+
+    if attempt.status == AttemptStatus.SUBMITTED:
+        forbidden(ErrorCode.ALREADY_COMPLETED, "Attempt already submitted")
 
     if attempt.status != AttemptStatus.IN_PROGRESS:
-        raise ForbiddenException("Attempt is not active")
+        forbidden(ErrorCode.ATTEMPT_NOT_ACTIVE, "Attempt is not active")
 
-    elapsed = int((now - attempt.started_at).total_seconds())
-    remaining = max(attempt.allowed_duration_seconds - elapsed, 0)
+    actual_elapsed = int((now - attempt.started_at).total_seconds())
+
+    # ==========================================================
+    # Defensive timeout enforcement
+    # ==========================================================
+    if actual_elapsed >= attempt.allowed_duration_seconds:
+        finalize_attempt(db, attempt)
+        db.commit()
+
+        forbidden(
+            ErrorCode.ATTEMPT_EXPIRED,
+            "Attempt time expired",
+        )
+
+
+    elapsed = min(
+        actual_elapsed,
+        attempt.allowed_duration_seconds
+    )
+
+    remaining = max(
+        attempt.allowed_duration_seconds - elapsed,
+        0
+    )
 
     answers = db.query(AttemptAnswer).filter(
         AttemptAnswer.attempt_id == attempt.id
@@ -387,6 +711,18 @@ def resume_attempt(
         for a in answers
     ]
 
+    pool = attempt.question_pool_ids or {}
+
+    base_ids = pool.get("base", [])
+    bonus_ids = pool.get("bonus", [])
+
+    navigation_order = build_attempt_order(
+        base_ids=base_ids,
+        bonus_ids=bonus_ids,
+        seed=attempt.shuffle_seed,
+        special_unlocked=attempt.special_unlocked,
+    )
+
     return {
         "attempt_id": str(attempt.id),
         "status": attempt.status,
@@ -394,14 +730,16 @@ def resume_attempt(
         "special_unlocked": attempt.special_unlocked,
         "hints_used": attempt.hints_used_count,
         "progress": progress,
+        "question_order": navigation_order,
     }
-# ==========================================================
-# HEARTBEAT (TELEMETRY ONLY)
-# ==========================================================
 
+
+# ==========================================================
+# HEARTBEAT
+# ==========================================================
 @router.post("/{attempt_id}/heartbeat")
 def heartbeat_attempt(
-    attempt_id: str,
+    attempt_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -415,20 +753,25 @@ def heartbeat_attempt(
     )
 
     if not attempt:
-        raise NotFoundException("Attempt not found")
+        not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Attempt not found")
 
     if attempt.participant.user_id != current_user.id:
-        raise ForbiddenException("Unauthorized attempt access")
+        forbidden(ErrorCode.FORBIDDEN, "Unauthorized attempt access")
 
     if attempt.status != AttemptStatus.IN_PROGRESS:
-        raise ForbiddenException("Attempt is not active")
+        forbidden(ErrorCode.ATTEMPT_NOT_ACTIVE, "Attempt is not active")
 
-    # update heartbeat timestamp
-    attempt.last_heartbeat_at = now
+    actual_elapsed = int((now - attempt.started_at).total_seconds())
 
-    # compute remaining time
-    elapsed = int((now - attempt.started_at).total_seconds())
-    remaining = max(attempt.allowed_duration_seconds - elapsed, 0)
+    elapsed = min(
+        actual_elapsed,
+        attempt.allowed_duration_seconds
+    )
+
+    remaining = max(
+        attempt.allowed_duration_seconds - elapsed,
+        0
+    )
 
     db.commit()
 
@@ -437,13 +780,14 @@ def heartbeat_attempt(
         "remaining_time_seconds": remaining,
         "status": attempt.status.value,
     }
+
+
 # ==========================================================
 # QUESTION VIEW EVENT
 # ==========================================================
-
 @router.post("/{attempt_id}/view-question")
 def view_question(
-    attempt_id: str,
+    attempt_id: UUID,
     payload: QuestionViewRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -452,17 +796,16 @@ def view_question(
     attempt = db.query(Attempt).filter(Attempt.id == attempt_id).first()
 
     if not attempt:
-        raise NotFoundException("Attempt not found")
+        not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Attempt not found")
 
     if attempt.participant.user_id != current_user.id:
-        raise ForbiddenException("Unauthorized")
+        forbidden(ErrorCode.FORBIDDEN, "Unauthorized")
 
-    # lifecycle guard
     if attempt.status != AttemptStatus.IN_PROGRESS:
         return {"ok": True}
 
-    import uuid
-    print("VIEW EVENT FIRED", attempt.id, payload.question_id)
+   # print("VIEW EVENT FIRED", attempt.id, payload.question_id)
+
     log_attempt_event(
         db,
         attempt_id=attempt.id,
