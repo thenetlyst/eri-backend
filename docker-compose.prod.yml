@@ -8,7 +8,7 @@ services:
   exam_db:
     image: postgres:15
     container_name: exam_db
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: exam_user
       POSTGRES_PASSWORD: exam_password
@@ -28,13 +28,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
   # -------------------------
   # ⚡ PGBOUNCER
   # -------------------------
   pgbouncer:
     image: edoburu/pgbouncer
     container_name: eri-pgbouncer
-    restart: always
+    restart: unless-stopped
     ports:
       - "6432:5432"
     environment:
@@ -61,6 +67,11 @@ services:
       retries: 5
       start_period: 20s
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
   # -------------------------
   # 🧱 MIGRATIONS
   # -------------------------
@@ -71,7 +82,7 @@ services:
       exam_db:
         condition: service_started
     env_file:
-      - .env
+      - .env.production
 
     command: >
       sh -c "
@@ -96,7 +107,7 @@ services:
       exam_db:
         condition: service_started
     env_file:
-      - .env
+      - .env.production
     environment:
       - ENABLE_API_STATS=false
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
@@ -109,6 +120,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
     command: >
       sh -c "
@@ -136,7 +153,7 @@ services:
       exam_db:
         condition: service_started
     env_file:
-      - .env
+      - .env.production
     environment:
       - ENABLE_API_STATS=false
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
@@ -149,6 +166,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
     command: >
       sh -c "
@@ -187,6 +210,12 @@ services:
       timeout: 10s
       retries: 3
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   # -------------------------
   # ⚙️ WORKER
   # -------------------------
@@ -199,11 +228,17 @@ services:
       pgbouncer:
         condition: service_started
     env_file:
-      - .env
+      - .env.production
     environment:
       - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
     
     restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
     command: >
       sh -c "
