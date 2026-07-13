@@ -12,7 +12,10 @@ import { reconstructAttempt } from "../lib/reconstruct.js";
 import { finalizeAttempt } from "../lib/finalize.js";
 import { randomOption } from "../lib/helpers.js";
 
-export const options = buildOptions();
+export const options = buildOptions(
+    Number(__ENV.VUS || 1),
+    Number(__ENV.ITERATIONS || Number(__ENV.VUS || 1))
+);
 
 export function setup() {
     validateConfig();
