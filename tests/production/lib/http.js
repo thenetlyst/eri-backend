@@ -2,7 +2,9 @@ import http from "k6/http";
 
 import { CONFIG } from "../config/config.js";
 import { expectStatus, parseJson } from "./helpers.js";
+import { Trend } from "k6/metrics";
 
+const endpointLatency = new Trend("endpoint_latency");
 /**
  * Generic GET request.
  */
@@ -17,17 +19,11 @@ export function get(url, headers, expectedStatus = 200, tags = {}) {
         }
     );
 
-    // ===== TEMPORARY DEBUG =====
-    console.log("----------------------------------------");
-    console.log("GET:", url);
-    console.log("Expected Status:", expectedStatus);
-    console.log("Actual Status:", response.status);
-    console.log("Response Body:");
-    console.log(response.body);
-    console.log("----------------------------------------");
-    // ===========================
+
 
     expectStatus(response, expectedStatus);
+
+    endpointLatency.add(response.timings.duration, tags);
 
     return {
         response,
@@ -62,6 +58,8 @@ export function post(
 
 
     expectStatus(response, expectedStatus);
+
+    endpointLatency.add(response.timings.duration, tags);
 
     return {
         response,
