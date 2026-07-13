@@ -59,15 +59,7 @@ export function post(
         }
     );
 
-    // ===== TEMPORARY DEBUG =====
-    console.log("----------------------------------------");
-    console.log("POST:", url);
-    console.log("Expected Status:", expectedStatus);
-    console.log("Actual Status:", response.status);
-    console.log("Response Body:");
-    console.log(response.body);
-    console.log("----------------------------------------");
-    // ===========================
+
 
     expectStatus(response, expectedStatus);
 
