@@ -26,10 +26,25 @@ export function buildDevToken(userNumber) {
  * Standard response validation.
  */
 export function expectStatus(response, expectedStatus) {
-    return check(response, {
+
+    const ok = check(response, {
         [`status is ${expectedStatus}`]: (r) =>
             r.status === expectedStatus,
     });
+
+    if (!ok) {
+        console.error("========================================");
+        console.error("UNEXPECTED HTTP RESPONSE");
+        console.error("URL            :", response.request.url);
+        console.error("Method         :", response.request.method);
+        console.error("Expected Status:", expectedStatus);
+        console.error("Actual Status  :", response.status);
+        console.error("Response Body  :");
+        console.error(response.body);
+        console.error("========================================");
+    }
+
+    return ok;
 }
 
 /**
