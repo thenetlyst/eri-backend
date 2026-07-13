@@ -7,6 +7,7 @@
 
 import { CONFIG } from "../config/config.js";
 import { buildHeaders } from "./helpers.js";
+import exec from "k6/execution";
 
 /**
  * Returns the authentication token for a user.
@@ -36,5 +37,8 @@ export function getHeaders(userNumber) {
  * Every Virtual User gets a unique dev account.
  */
 export function getUserNumber() {
-    return CONFIG.USER_START + (__VU - 1);
+    return (
+        CONFIG.USER_START +
+        (exec.scenario.iterationInTest % CONFIG.USER_COUNT)
+    );
 }

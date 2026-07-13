@@ -10,7 +10,7 @@ export const CONFIG = {
 
     USER_START: Number(__ENV.USER_START || 1),
 
-    USER_COUNT: Number(__ENV.USER_COUNT || 100),
+    TOTAL_USERS: Number(__ENV.USER_COUNT || 100),
 
     DEFAULT_VUS: Number(__ENV.VUS || 1),
 
