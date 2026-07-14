@@ -66,12 +66,12 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
         if pool_metrics["checked_out"] > pool_metrics["peak_checked_out"]:
             pool_metrics["peak_checked_out"] = pool_metrics["checked_out"]
 
-        logger.info(
-            f"[POOL] CHECKOUT "
-            f"active={pool_metrics['checked_out']} "
-            f"peak={pool_metrics['peak_checked_out']} "
-            f"total={pool_metrics['total_checkouts']}"
-        )
+#        logger.info(
+#            f"[POOL] CHECKOUT "
+#            f"active={pool_metrics['checked_out']} "
+#            f"peak={pool_metrics['peak_checked_out']} "
+#            f"total={pool_metrics['total_checkouts']}"
+#        )
 
 
 @event.listens_for(engine, "checkin")
@@ -83,11 +83,11 @@ def checkin(dbapi_connection, connection_record):
         pool_metrics["checked_out"] -= 1
         pool_metrics["total_checkins"] += 1
 
-        logger.info(
-            f"[POOL] CHECKIN "
-            f"active={pool_metrics['checked_out']} "
-            f"returned={pool_metrics['total_checkins']}"
-        )
+#        logger.info(
+#            f"[POOL] CHECKIN "
+#            f"active={pool_metrics['checked_out']} "
+#            f"returned={pool_metrics['total_checkins']}"
+#        )
 
     if start is None:
         return
@@ -120,12 +120,12 @@ def get_db():
     db: Session = SessionLocal()
     create_ms = round((perf_counter() - create_start) * 1000, 3)
 
-    logger.info(
-        "db_session_created",
-        extra={
-            "session_create_ms": create_ms,
-        },
-    )
+#    logger.info(
+#        "db_session_created",
+#        extra={
+#            "session_create_ms": create_ms,
+#        },
+#    )
 
     try:
         yield db
@@ -134,9 +134,9 @@ def get_db():
         db.close()
         close_ms = round((perf_counter() - close_start) * 1000, 3)
 
-        logger.info(
-            "db_session_closed",
-            extra={
-                "session_close_ms": close_ms,
-            },
-        )
+#        logger.info(
+#            "db_session_closed",
+#            extra={
+#                "session_close_ms": close_ms,
+#            },
+#        )
