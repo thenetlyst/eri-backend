@@ -135,7 +135,7 @@ services:
       echo '⏳ Waiting for PostgreSQL...' &&
       until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
       echo '🚀 Starting backend 1...' &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --backlog 2048
       "
     ulimits:
       nofile:
@@ -184,7 +184,7 @@ services:
       echo '⏳ Waiting for PostgreSQL...' &&
       until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
       echo '🚀 Starting backend 2...' &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --backlog 2048
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --backlog 2048
       "
     ulimits:
       nofile:

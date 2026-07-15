@@ -113,7 +113,14 @@ async def finalize_expired_attempts_loop():
                         )
 
                         try:
-                            print("Calling finalize_attempt()", flush=True)
+                            logger.info(
+                                "worker_finalize_attempt",
+                                extra={
+                                    "attempt_id": str(attempt.id),
+                                    "status": attempt.status.value,
+                                    "progress_applied": attempt.progress_applied,
+                                },
+                            )
 
                             finalize_attempt(db, attempt)
 
@@ -134,7 +141,12 @@ async def finalize_expired_attempts_loop():
 
                     db.commit()
 
-                    print("Commit successful", flush=True)
+                    logger.info(
+                        "worker_finalize_commit",
+                        extra={
+                            "attempt_id": str(attempt.id),
+                        },
+                    )
 
                     await asyncio.sleep(0.1)
 

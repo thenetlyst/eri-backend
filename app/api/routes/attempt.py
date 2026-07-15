@@ -1,8 +1,10 @@
+import os
 import uuid
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
 import logging
+from time import perf_counter
 
 from app.core.request_trace import RequestTrace
 
@@ -67,18 +69,36 @@ def start_attempt(
     from sqlalchemy.dialects.postgresql import insert
 
     trace = RequestTrace()
+    request_start = perf_counter()
+
+    connection_wait_start = None
 
     try:
 
         # ==========================================================
         # VALIDATIONS
         # ==========================================================
+        connection_wait_start = perf_counter()
+
         with trace.measure("exam_day_lookup"):
             exam_day = (
                 db.query(ExamDay)
                 .filter(ExamDay.id == payload.exam_day_id)
                 .first()
             )
+
+        connection_wait_ms = round(
+            (perf_counter() - connection_wait_start) * 1000,
+            2,
+        )
+
+        logger.info(
+            "first_query_completed",
+            extra={
+                "connection_wait_ms": connection_wait_ms,
+                "pool_status": db.bind.pool.status(),
+            },
+        )
 
         if not exam_day:
             not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Exam day not found")
@@ -114,19 +134,73 @@ def start_attempt(
             )
 
         if not participant:
-            forbidden(ErrorCode.FORBIDDEN, "User not enrolled for this challenge")
+            logger.warning(
+                "start_attempt_failed_validation",
+                extra={
+                    "stage": "participant_lookup",
+                    "reason": "participant_not_found",
+                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
+                    "trace": trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.FORBIDDEN,
+                "User not enrolled for this challenge",
+            )
 
         if participant.account_status != AccountStatus.ACTIVE:
-            forbidden(ErrorCode.FORBIDDEN, "Participant account not active")
+            logger.warning(
+                "start_attempt_failed_validation",
+                extra={
+                    "stage": "participant_lookup",
+                    "reason": "participant_inactive",
+                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
+                    "trace": trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.FORBIDDEN,
+                "Participant account not active",
+            )
 
         now = datetime.now(timezone.utc)
 
-        if now < exam_day.window_start - timedelta(seconds=grace_seconds) or \
-            now > exam_day.window_end + timedelta(seconds=grace_seconds):
-            forbidden(ErrorCode.WINDOW_CLOSED, "Exam window not active")
+        if (
+            now < exam_day.window_start - timedelta(seconds=grace_seconds)
+            or now > exam_day.window_end + timedelta(seconds=grace_seconds)
+        ):
+            logger.warning(
+                "start_attempt_failed_validation",
+                extra={
+                    "stage": "window_validation",
+                    "reason": "window_closed",
+                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
+                    "trace": trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.WINDOW_CLOSED,
+                "Exam window not active",
+            )
 
         if exam_day.is_force_locked:
-            forbidden(ErrorCode.FORCE_LOCKED, "Exam is force locked")
+            logger.warning(
+                "start_attempt_failed_validation",
+                extra={
+                    "stage": "window_validation",
+                    "reason": "force_locked",
+                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
+                    "trace": trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.FORCE_LOCKED,
+                "Exam is force locked",
+            )
 
         # ==========================================================
         # PROGRESS
@@ -157,7 +231,20 @@ def start_attempt(
         bonus_ids = sorted([q["id"] for q in questions if q["is_special"]])
 
         if not base_ids:
-            forbidden(ErrorCode.INVALID_ATTEMPT, "No base questions configured for this exam day")
+            logger.warning(
+                "start_attempt_failed_validation",
+                extra={
+                    "stage": "question_cache",
+                    "reason": "no_questions",
+                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
+                    "trace": trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.INVALID_ATTEMPT,
+                "No base questions configured for this exam day",
+            )
 
         total_allowed = int(
             sum(
@@ -199,15 +286,17 @@ def start_attempt(
             Attempt.status,
         )
 
-        with trace.measure("attempt_insert"):
-            result = db.execute(stmt)
+        with trace.measure("db_write"):
+
+            with trace.measure("attempt_insert"):
+                result = db.execute(stmt)
 
 
-        with trace.measure("returning_fetch"):
-            row = result.fetchone()
+            with trace.measure("returning_fetch"):
+                row = result.fetchone()
     
-        with trace.measure("commit"):
-            db.commit()
+            with trace.measure("commit"):
+                db.commit()
 
 
         # ==========================================================
@@ -220,34 +309,49 @@ def start_attempt(
                     "Attempt already submitted",
                     meta={"attempt_id": str(row.id)}
                 )
+            
+            with trace.measure("response_build"):
+                response = AttemptStartResponse(
+                    attempt_id=row.id,
+                    allowed_duration_seconds=row.allowed_duration_seconds,
+                    special_unlocked=row.special_unlocked,
+                )
+
+            total_ms = round((perf_counter() - request_start) * 1000, 2)
+
             logger.info(
                 "start_attempt_profile",
                 extra={
                     "participant_id": str(participant.id),
                     "attempt_created": True,
-                    **trace.summary(),
+                    "total_ms": total_ms,
+                    "connection_wait_ms": connection_wait_ms,
+                    "pool_status": db.bind.pool.status(),
+                    "trace": trace.summary(),
                 },
             )
+            print("\n" + "=" * 80)
+            print("START_ATTEMPT PROFILE")
+            print(f"Total: {total_ms} ms")
+            print(f"Connection wait: {connection_wait_ms} ms")
+            print(trace.summary())
+            print("=" * 80 + "\n")
 
 
-
-            return AttemptStartResponse(
-                attempt_id=row.id,
-                allowed_duration_seconds=row.allowed_duration_seconds,
-                special_unlocked=row.special_unlocked,
-            )
+            return response
 
         # ==========================================================
         # ✅ CASE 2: EXISTING ATTEMPT (FALLBACK)
         # ==========================================================
-        attempt = (
-            db.query(Attempt)
-            .filter(
-                Attempt.participant_id == participant.id,
-                Attempt.exam_day_id == exam_day.id,
+        with trace.measure("existing_attempt_lookup"):
+            attempt = (
+                db.query(Attempt)
+                .filter(
+                    Attempt.participant_id == participant.id,
+                    Attempt.exam_day_id == exam_day.id,
+                )
+                .first()
             )
-            .first()
-        )
 
         if not attempt:
             forbidden(
@@ -262,25 +366,50 @@ def start_attempt(
                 meta={"attempt_id": str(attempt.id)}
             )
 
+        with trace.measure("response_build"):
+            response = AttemptStartResponse(
+                attempt_id=attempt.id,
+                allowed_duration_seconds=attempt.allowed_duration_seconds,
+                special_unlocked=attempt.special_unlocked,
+            )
+
+        total_ms = round((perf_counter() - request_start) * 1000, 2)
+
         logger.info(
             "start_attempt_profile",
             extra={
                 "participant_id": str(participant.id),
                 "attempt_created": False,
-                **trace.summary(),
+                "total_ms": total_ms,
+                "connection_wait_ms": connection_wait_ms,
+                "pool_status": db.bind.pool.status(),
+                "trace": trace.summary(),
             },
         )
+        print("\n" + "=" * 80)
+        print("START_ATTEMPT FALLBACK")
+        print(f"Total: {total_ms} ms")
+        print(f"Connection wait: {connection_wait_ms} ms")
+        print(trace.summary())
+        print("=" * 80 + "\n")
 
-
-        return AttemptStartResponse(
-            attempt_id=attempt.id,
-            allowed_duration_seconds=attempt.allowed_duration_seconds,
-            special_unlocked=attempt.special_unlocked,
-        )
+        return response
+    
     except Exception:
+        total_ms = round((perf_counter() - request_start) * 1000, 2)
+
+        print("\n" + "=" * 80)
+        print("START_ATTEMPT EXCEPTION")
+        print(f"Total: {total_ms} ms")
+        print(trace.summary())
+        print("=" * 80 + "\n")
+
         logger.exception(
             "start_attempt_failed",
-            extra=trace.summary(),
+            extra={
+                "total_ms": total_ms,
+                "trace": trace.summary(),
+            },
         )
         raise
 
@@ -326,7 +455,20 @@ def submit_answer(
             forbidden(ErrorCode.FORBIDDEN, "Unauthorized attempt access")
 
         if attempt.status != AttemptStatus.IN_PROGRESS:
-            forbidden(ErrorCode.ATTEMPT_NOT_ACTIVE, "Attempt is not active")
+            logger.warning(
+                "attempt_not_active",
+                extra={
+                    "attempt_id": str(attempt.id),
+                    "status": attempt.status.value,
+                    "worker_pid": os.getpid(),
+                    **trace.summary(),
+                },
+            )
+
+            forbidden(
+                ErrorCode.ATTEMPT_NOT_ACTIVE,
+                "Attempt is not active",
+            )
 
         # ==========================================================
         # TIME CHECK
@@ -543,9 +685,9 @@ def submit_answer(
         db.rollback()
         conflict(ErrorCode.DATABASE_ERROR, "Answer submission conflict")
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise e
+        raise
     # ==========================================================
     # EVENT LOGGING
     # ==========================================================

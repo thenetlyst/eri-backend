@@ -10,7 +10,12 @@ export const CONFIG = {
 
     USER_START: Number(__ENV.USER_START || 1),
 
-    USER_COUNT: Number(__ENV.USER_COUNT || 100),
+    USER_COUNT: Number(
+        __ENV.USER_COUNT ||
+        __ENV.ITERATIONS ||
+        __ENV.VUS ||
+        1
+    ),
 
     DEFAULT_VUS: Number(__ENV.VUS || 1),
 
@@ -24,9 +29,9 @@ export const CONFIG = {
 };
 
 export function validateConfig() {
-    if (!CONFIG.EXAM_DAY_ID) {
-        throw new Error(
-            "Missing EXAM_DAY_ID. Pass it using -e EXAM_DAY_ID=<uuid>"
+    if (CONFIG.USER_COUNT < CONFIG.DEFAULT_ITERATIONS) {
+        console.warn(
+            `Warning: USER_COUNT (${CONFIG.USER_COUNT}) is less than ITERATIONS (${CONFIG.DEFAULT_ITERATIONS}). Users will be reused.`
         );
     }
 }

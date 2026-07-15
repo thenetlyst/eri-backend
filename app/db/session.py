@@ -17,14 +17,22 @@ from time import perf_counter
 # --------------------------------------------------
 
 from threading import Lock
+import os
+import threading
+import uuid
 
 _pool_lock = Lock()
+
+active_connections = {}
+
 
 pool_metrics = {
     "checked_out": 0,
     "peak_checked_out": 0,
     "total_checkouts": 0,
     "total_checkins": 0,
+    "longest_connection_ms": 0,
+    "currently_active": 0,
 }
 
 
@@ -58,13 +66,22 @@ engine = create_engine(
 @event.listens_for(engine, "checkout")
 def checkout(dbapi_connection, connection_record, connection_proxy):
     connection_record.info["checkout_time"] = time.perf_counter()
+    connection_uuid = str(uuid.uuid4())
+    connection_record.info["connection_uuid"] = connection_uuid
 
     with _pool_lock:
+        active_connections[connection_uuid] = {
+            "pid": os.getpid(),
+            "thread": threading.get_ident(),
+            "checkout_time": time.time(),
+        }
+
         pool_metrics["checked_out"] += 1
         pool_metrics["total_checkouts"] += 1
 
         if pool_metrics["checked_out"] > pool_metrics["peak_checked_out"]:
             pool_metrics["peak_checked_out"] = pool_metrics["checked_out"]
+
 
 #        logger.info(
 #            f"[POOL] CHECKOUT "
@@ -76,10 +93,17 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
 
 @event.listens_for(engine, "checkin")
 def checkin(dbapi_connection, connection_record):
+    connection_uuid = connection_record.info.pop(
+        "connection_uuid",
+        None,
+    )
 
     start = connection_record.info.pop("checkout_time", None)
 
     with _pool_lock:
+        if connection_uuid:
+            active_connections.pop(connection_uuid, None)
+
         pool_metrics["checked_out"] -= 1
         pool_metrics["total_checkins"] += 1
 
@@ -93,10 +117,17 @@ def checkin(dbapi_connection, connection_record):
         return
 
     held_ms = (time.perf_counter() - start) * 1000
+    pool_metrics["longest_connection_ms"] = max(
+        pool_metrics["longest_connection_ms"],
+        held_ms,
+    )
 
-    if held_ms > 500:
+    if held_ms > 100:
         logger.warning(
-            f"[POOL] LONG CONNECTION {held_ms:.2f} ms"
+            "[POOL] LONG CONNECTION %.2f ms | checked_out=%d | peak=%d",
+            held_ms,
+            pool_metrics["checked_out"],
+            pool_metrics["peak_checked_out"],
         )
         
 # --------------------------------------------------
@@ -116,23 +147,28 @@ SessionLocal = sessionmaker(
 
 
 def get_db():
-    create_start = perf_counter()
-    db: Session = SessionLocal()
-    create_ms = round((perf_counter() - create_start) * 1000, 3)
+    session_start = perf_counter()
 
-#    logger.info(
-#        "db_session_created",
-#        extra={
-#            "session_create_ms": create_ms,
-#        },
-#    )
+    db: Session = SessionLocal()
 
     try:
         yield db
+
     finally:
-        close_start = perf_counter()
+        lifetime_ms = round(
+            (perf_counter() - session_start) * 1000,
+            3,
+        )
+
+        logger.info(
+            "db_session_lifetime",
+            extra={
+                "session_lifetime_ms": lifetime_ms,
+            },
+        )
+
         db.close()
-        close_ms = round((perf_counter() - close_start) * 1000, 3)
+        
 
 #        logger.info(
 #            "db_session_closed",

@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -14,10 +14,15 @@ from app.models.attempt_answer import AttemptAnswer
 from app.services.attempt_service import finalize_attempt
 from app.services.question_cache import get_exam_day_questions_cached
 
+from time import perf_counter
+import logging
 from app.core.exceptions import (
     NotFoundException,
     ForbiddenException,
 )
+
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Questions"])
 
@@ -31,9 +36,24 @@ def list_questions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    attempt = db.query(Attempt).filter(
-        Attempt.id == attempt_id
-    ).first()
+    
+    request_start = perf_counter()
+
+    lookup_start = perf_counter()
+
+    attempt = (
+        db.query(Attempt)
+        .options(joinedload(Attempt.participant))
+        .filter(
+            Attempt.id == attempt_id
+        )
+        .first()
+    )
+
+    logger.info(
+        "LIST_QUESTIONS attempt_lookup_ms=%.2f",
+        (perf_counter() - lookup_start) * 1000,
+    )
 
     if not attempt:
         raise NotFoundException("Attempt not found")
@@ -45,16 +65,38 @@ def list_questions(
         raise ForbiddenException("Attempt already completed")
 
     # ⭐ CACHE HIT
-    cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
+    cache_start = perf_counter()
+
+    cached_questions = get_exam_day_questions_cached(
+        str(attempt.exam_day_id)
+    )
+
+    logger.info(
+        "LIST_QUESTIONS cache_lookup_ms=%.2f",
+        (perf_counter() - cache_start) * 1000,
+    )
 
     # IMPORTANT → copy before use
     questions = [q.copy() for q in cached_questions.values()]
 
-    answers = db.query(AttemptAnswer).filter(
-        AttemptAnswer.attempt_id == attempt.id
-    ).all()
+    answers_start = perf_counter()
+
+    answers = (
+        db.query(AttemptAnswer)
+        .filter(
+            AttemptAnswer.attempt_id == attempt.id
+        )
+        .all()
+    )
+
+    logger.info(
+        "LIST_QUESTIONS answers_query_ms=%.2f",
+        (perf_counter() - answers_start) * 1000,
+    )
 
     answered_map = {str(a.question_id): a for a in answers}
+
+    build_start = perf_counter()
 
     result = []
 
@@ -88,6 +130,16 @@ def list_questions(
                 "bonus_locked": bonus_locked,
             }
         )
+
+    logger.info(
+        "LIST_QUESTIONS build_manifest_ms=%.2f",
+        (perf_counter() - build_start) * 1000,
+    )
+
+    logger.info(
+        "LIST_QUESTIONS total_ms=%.2f",
+        (perf_counter() - request_start) * 1000,
+    )
 
     return result
 

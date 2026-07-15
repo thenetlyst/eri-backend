@@ -25,6 +25,16 @@ from app.core.request_metrics import (
     clear_request,
 )
 from app.core.request_context import start_request_context
+
+from app.core.runtime_metrics import runtime_metrics
+
+from app.db.session import (
+    engine,
+    pool_metrics,
+    active_connections,
+    _pool_lock,
+)
+
 # ----------------------------------------------------------
 # ENV FLAGS
 # ----------------------------------------------------------
@@ -93,6 +103,8 @@ async def request_logging_middleware(request: Request, call_next):
 
     request_start = perf_counter()
 
+    runtime_metrics.begin_request()
+
     try:
         app_start = perf_counter()
 
@@ -108,13 +120,26 @@ async def request_logging_middleware(request: Request, call_next):
             "Unhandled exception during request",
             extra={"request_id": request_id},
         )
+
+        runtime_metrics.fail_request()
+
         if ENABLE_PROFILING:
             clear_request()
+
         raise
+
 
     total_ms = round(
         (perf_counter() - request_start) * 1000,
         3,
+    )
+
+    runtime_metrics.finish_request(
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=total_ms,
     )
 
     if ENABLE_PROFILING:
@@ -141,7 +166,9 @@ async def request_logging_middleware(request: Request, call_next):
 
         response.headers["X-DB-Time"] = str(db_ms)
         response.headers["X-DB-Queries"] = str(queries)
+
         clear_request()
+
     else:
         logger.info(
             f"⚡ {request.method} {request.url.path} | {total_ms} ms",
@@ -150,6 +177,10 @@ async def request_logging_middleware(request: Request, call_next):
 
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Request-Time"] = str(total_ms)
+
+    response.headers["X-Worker-PID"] = str(runtime_metrics.pid)
+    response.headers["X-Backend"] = runtime_metrics.hostname
+
     return response
 
 @app.exception_handler(ApiError)
@@ -192,13 +223,97 @@ def health_check():
     return {"status": "ok"}
 
 
-import socket
+# ==========================================================
+# Runtime Diagnostics
+# ==========================================================
 
-@app.get("/pq/backend-stats")
-def backend_stats():
+@app.get("/pq/runtime")
+def runtime_info():
+    """
+    Runtime information for this backend worker.
+    """
+    return runtime_metrics.runtime_snapshot()
+
+
+@app.get("/pq/metrics")
+def metrics():
+    """
+    Request metrics.
+    """
+
+    snapshot = runtime_metrics.runtime_snapshot()
+
     return {
-        "hostname": socket.gethostname(),
-        "pid": os.getpid(),
-        "requests": dict(endpoint_counts),
-        "total_requests": sum(endpoint_counts.values()),
+        "active_requests": snapshot["active_requests"],
+        "completed_requests": snapshot["completed_requests"],
+        "failed_requests": snapshot["failed_requests"],
+        "total_requests": snapshot["total_requests"],
+        "average_latency_ms": snapshot["average_latency_ms"],
+        "max_latency_ms": snapshot["max_latency_ms"],
+    }
+
+
+@app.get("/pq/requests")
+def recent_requests():
+    """
+    Recent requests handled by this worker.
+    """
+
+    history = runtime_metrics.request_history()
+
+    return {
+        "count": len(history),
+        "requests": history,
+    }
+
+
+@app.get("/pq/pool")
+def pool():
+
+    return {
+        "status": engine.pool.status(),
+
+        "checked_out": pool_metrics["checked_out"],
+        "peak_checked_out": pool_metrics["peak_checked_out"],
+
+        "total_checkouts": pool_metrics["total_checkouts"],
+        "total_checkins": pool_metrics["total_checkins"],
+    }
+
+
+@app.get("/pq/connections")
+def connections():
+
+    now = time.time()
+
+    with _pool_lock:
+
+        snapshot = []
+
+        for conn_id, info in active_connections.items():
+
+            snapshot.append(
+                {
+                    "connection_id": conn_id,
+                    "worker_pid": info["pid"],
+                    "thread_id": info["thread"],
+                    "checked_out_seconds": round(
+                        now - info["checkout_time"],
+                        3,
+                    ),
+                }
+            )
+
+    snapshot.sort(
+        key=lambda x: x["checked_out_seconds"],
+        reverse=True,
+    )
+
+    return {
+        "worker_pid": runtime_metrics.pid,
+        "hostname": runtime_metrics.hostname,
+
+        "checked_out": len(snapshot),
+
+        "connections": snapshot,
     }

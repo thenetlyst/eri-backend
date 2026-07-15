@@ -1,3 +1,6 @@
+import logging
+import os
+
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -72,6 +75,17 @@ def finalize_attempt(db: Session, attempt: Attempt):
     attempt.final_score = final_score_total
     attempt.total_time_seconds = max(total_time, 0)
     attempt.submitted_at = now
+
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "attempt_finalized",
+        extra={
+            "attempt_id": str(attempt.id),
+            "worker_pid": os.getpid(),
+            "status_before": attempt.status.value,
+            "progress_applied": attempt.progress_applied,
+        },
+    )
     attempt.status = AttemptStatus.SUBMITTED
 
     # ⭐ Golden Snapshot (immutable)
@@ -167,5 +181,13 @@ def finalize_attempt(db: Session, attempt: Attempt):
 
     # ✅ idempotency completion marker
     attempt.progress_applied = True
-
+    logger.info(
+        "attempt_finalize_complete",
+        extra={
+            "attempt_id": str(attempt.id),
+            "worker_pid": os.getpid(),
+            "status_after": attempt.status.value,
+            "progress_applied": attempt.progress_applied,
+        },
+    )
     return attempt
