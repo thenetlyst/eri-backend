@@ -17,5 +17,16 @@ class Settings:
         "http://localhost:5173"
     ).split(",")
 
+    # --------------------------------------------------
+    # Exam Context Cache
+    # --------------------------------------------------
+
+    EXAM_CONTEXT_CACHE_ENABLED: bool = (
+        os.getenv(
+            "EXAM_CONTEXT_CACHE_ENABLED",
+            "true",
+        ).lower()
+        == "true"
+    )
 
 settings = Settings()
