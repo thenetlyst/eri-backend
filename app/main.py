@@ -24,6 +24,7 @@ from app.core.request_metrics import (
     get_metrics,
     clear_request,
 )
+from app.core.request_profiler import RequestProfilerMiddleware
 from app.core.request_context import start_request_context
 
 from app.core.runtime_metrics import runtime_metrics
@@ -34,6 +35,7 @@ from app.db.session import (
     active_connections,
     _pool_lock,
 )
+
 
 # ----------------------------------------------------------
 # ENV FLAGS
@@ -72,6 +74,8 @@ def print_api_stats():
 
 app = FastAPI(title="ERI Assessment Engine")
 
+app.add_middleware(RequestProfilerMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -106,14 +110,22 @@ async def request_logging_middleware(request: Request, call_next):
     runtime_metrics.begin_request()
 
     try:
-        app_start = perf_counter()
+        # ------------------------------------------------------
+        # Measure the entire FastAPI/Starlette request pipeline
+        # ------------------------------------------------------
+        before_call_next = perf_counter()
 
         response = await call_next(request)
 
-        app_ms = round(
-            (perf_counter() - app_start) * 1000,
+        after_call_next = perf_counter()
+
+        call_next_ms = round(
+            (after_call_next - before_call_next) * 1000,
             3,
         )
+
+        # Start measuring header processing
+        before_headers = perf_counter()
 
     except Exception:
         logger.exception(
@@ -128,7 +140,9 @@ async def request_logging_middleware(request: Request, call_next):
 
         raise
 
-
+    # ------------------------------------------------------
+    # Total request time
+    # ------------------------------------------------------
     total_ms = round(
         (perf_counter() - request_start) * 1000,
         3,
@@ -142,32 +156,17 @@ async def request_logging_middleware(request: Request, call_next):
         duration_ms=total_ms,
     )
 
+    # ------------------------------------------------------
+    # SQL profiling
+    # ------------------------------------------------------
     if ENABLE_PROFILING:
         metrics = get_metrics()
+
         db_ms = round(metrics.db_time * 1000, 2) if metrics else 0.0
         queries = metrics.query_count if metrics else 0
 
-        logger.info(
-            "request_complete",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "duration_ms": total_ms,
-                "app_ms": app_ms,
-                "middleware_overhead_ms": round(
-                    total_ms - app_ms,
-                    3,
-                ),
-                "db_ms": db_ms,
-                "queries": queries,
-            },
-        )
-
         response.headers["X-DB-Time"] = str(db_ms)
         response.headers["X-DB-Queries"] = str(queries)
-
-        clear_request()
 
     else:
         logger.info(
@@ -175,11 +174,51 @@ async def request_logging_middleware(request: Request, call_next):
             extra={"request_id": request_id},
         )
 
+    # ------------------------------------------------------
+    # Standard response headers
+    # ------------------------------------------------------
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Request-Time"] = str(total_ms)
 
     response.headers["X-Worker-PID"] = str(runtime_metrics.pid)
     response.headers["X-Backend"] = runtime_metrics.hostname
+
+    # ------------------------------------------------------
+    # Measure header processing
+    # ------------------------------------------------------
+    after_headers = perf_counter()
+
+    header_ms = round(
+        (after_headers - before_headers) * 1000,
+        3,
+    )
+
+    unexplained_ms = round(
+        total_ms - call_next_ms - header_ms,
+        3,
+    )
+
+    # ------------------------------------------------------
+    # Final diagnostics log
+    # ------------------------------------------------------
+    if ENABLE_PROFILING:
+        logger.info(
+            "request_complete",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": total_ms,
+                "call_next_ms": call_next_ms,
+                "header_ms": header_ms,
+                "unexplained_ms": unexplained_ms,
+                "db_ms": db_ms,
+                "queries": queries,
+            },
+        )
+
+        clear_request()
 
     return response
 
@@ -301,6 +340,8 @@ def connections():
                         now - info["checkout_time"],
                         3,
                     ),
+                    "checkout_timestamp": info["checkout_timestamp"],
+                    "stack": info["stack"],
                 }
             )
 

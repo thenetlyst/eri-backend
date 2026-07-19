@@ -17,6 +17,23 @@ export const options = buildOptions(
     Number(__ENV.ITERATIONS || Number(__ENV.VUS || 1))
 );
 
+// Added for individual endpoint testing:
+
+const MODE = (__ENV.MODE || "finalize").toLowerCase();
+
+const VALID_MODES = new Set([
+    "start",
+    "manifest",
+    "question",
+    "submit",
+    "reconstruct",
+    "finalize",
+]);
+
+if (!VALID_MODES.has(MODE)) {
+    fail(`Unknown MODE: ${MODE}`);
+}
+
 export function setup() {
     validateConfig();
 }
@@ -33,7 +50,18 @@ export default function () {
     if (!check(attempt, {
         "attempt created": (r) => !!r?.attempt_id,
     })) {
+
+        console.error("========================================");
+        console.error("START ATTEMPT FAILED");
+        console.error("========================================");
+        console.error(JSON.stringify(attempt, null, 2));
+        console.error("========================================");
+
         fail("Unable to start attempt.");
+    }
+
+    if (MODE === "start") {
+        return;
     }
 
     //
@@ -49,6 +77,10 @@ export default function () {
         "manifest not empty": (r) => r.length > 0,
     })) {
         fail("Question manifest invalid.");
+    }
+
+    if (MODE === "manifest") {
+        return;
     }
 
     //
@@ -74,6 +106,10 @@ export default function () {
             fail(`Question ${item.question_order} retrieval failed.`);
         }
 
+        if (MODE === "question") {
+            return;
+        }
+
         const answer = submitAnswer(
             userNumber,
             attempt.attempt_id,
@@ -82,9 +118,15 @@ export default function () {
             false
         );
 
-        check(answer, {
+        if (!check(answer, {
             "answer stored": (a) => a !== null,
-        });
+        })) {
+            fail("Submit answer failed.");
+        }
+
+        if (MODE === "submit") {
+            return;
+        }
     }
 
     //
@@ -101,6 +143,11 @@ export default function () {
         "questions restored": (r) => Array.isArray(r.snapshot?.questions),
     })) {
         fail("Reconstruct failed.");
+    }
+
+
+    if (MODE === "reconstruct") {
+        return;
     }
 
     //

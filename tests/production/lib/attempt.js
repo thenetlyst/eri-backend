@@ -9,21 +9,28 @@ import { post } from "./http.js";
  */
 export function startAttempt(userNumber) {
 
-    return post(
+/*    console.log("EXAM_DAY_ID =", CONFIG.EXAM_DAY_ID);*/
 
+    const result = post(
         `${CONFIG.BASE_URL}/attempts/start`,
-
         {
             exam_day_id: CONFIG.EXAM_DAY_ID,
         },
-
         getHeaders(userNumber),
-
         200,
-
         {
             endpoint: "start_attempt",
         }
+    );
 
-    ).data;
+    if (result.response.status !== 200) {
+        console.error("========================================");
+        console.error("START ATTEMPT FAILED");
+        console.error("STATUS :", result.response.status);
+        console.error("HEADERS:", JSON.stringify(result.response.headers));
+        console.error("BODY   :", result.response.body);
+        console.error("========================================");
+    }
+
+    return result.data;
 }

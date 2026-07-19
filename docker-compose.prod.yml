@@ -43,16 +43,19 @@ services:
     restart: unless-stopped
     ports:
       - "6432:5432"
+
     environment:
       DB_USER: exam_user
       DB_PASSWORD: exam_password
       DB_HOST: exam_db
       DB_NAME: exam_platform
+      ADMIN_USERS: exam_user
+      STATS_USERS: exam_user
 
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
-      DEFAULT_POOL_SIZE: 40
-      RESERVE_POOL_SIZE: 10
+      DEFAULT_POOL_SIZE: 100
+      RESERVE_POOL_SIZE: 25
 
       AUTH_TYPE: plain
 
@@ -130,13 +133,27 @@ services:
         max-size: "20m"
         max-file: "5"
 
-    command: >
-      sh -c "
-      echo '⏳ Waiting for PostgreSQL...' &&
-      until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
-      echo '🚀 Starting backend 1...' &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --backlog 2048
-      "
+    command:
+      - gunicorn
+      - app.main:app
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - -w
+      - "6"
+      - --bind
+      - 0.0.0.0:8000
+      - --backlog
+      - "2048"
+      - --timeout
+      - "60"
+      - --graceful-timeout
+      - "30"
+      - --keep-alive
+      - "30"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
     ulimits:
       nofile:
         soft: 65536
@@ -145,51 +162,65 @@ services:
   # -------------------------
   # 🚀 BACKEND 2
   # -------------------------
-  eri-backend-2:
-    build: .
-    container_name: eri-backend-2
-    ports:
-      - "8002:8000"
-    depends_on:
-      migrations:
-        condition: service_completed_successfully
-      exam_db:
-        condition: service_started
-    env_file:
-      - .env.production
-    environment:
-      - ENABLE_API_STATS=false
-      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
+#  eri-backend-2:
+#    build: .
+#    container_name: eri-backend-2
+#    ports:
+#      - "8002:8000"
+#    depends_on:
+#      migrations:
+#        condition: service_completed_successfully
+#      exam_db:
+#        condition: service_started
+#    env_file:
+#      - .env.production
+#    environment:
+#      - ENABLE_API_STATS=false
+#      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
     
-    volumes:
-      - ./firebase_service_account.json:/app/firebase_service_account.json:ro
+#    volumes:
+#      - ./firebase_service_account.json:/app/firebase_service_account.json:ro
+#
+#    restart: unless-stopped
+#
+#    healthcheck:
+#      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 3
+#      start_period: 40s
 
-    restart: unless-stopped
+#    logging:
+#      driver: json-file
+#      options:
+#        max-size: "20m"
+#        max-file: "5"
 
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-
-    command: >
-      sh -c "
-      echo '⏳ Waiting for PostgreSQL...' &&
-      until pg_isready -h pgbouncer -p 5432 -U exam_user; do sleep 2; done &&
-      echo '🚀 Starting backend 2...' &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --backlog 2048
-      "
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
+#    command:
+#      - gunicorn
+#      - app.main:app
+#      - -k
+#      - uvicorn.workers.UvicornWorker
+#      - -w
+#      - "4"
+#      - --bind
+#      - 0.0.0.0:8000
+#      - --backlog
+#      - "2048"
+#      - --timeout
+#      - "60"
+#      - --graceful-timeout
+#      - "30"
+#      - --keep-alive
+#      - "30"
+#      - --access-logfile
+#      - "-"
+#      - --error-logfile
+#      - "-"
+#    ulimits:
+#      nofile:
+#        soft: 65536
+#        hard: 65536
 
   nginx:
     image: nginx:1.27-alpine
@@ -198,8 +229,8 @@ services:
     depends_on:
       eri-backend-1:
         condition: service_started
-      eri-backend-2:
-        condition: service_started
+#      eri-backend-2:
+#        condition: service_started
 
     ports:
       - "80:80"

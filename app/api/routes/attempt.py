@@ -8,7 +8,7 @@ from time import perf_counter
 
 from app.core.request_trace import RequestTrace
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +24,7 @@ from app.models.challenge import Challenge, ChallengeStatus
 from app.models.user import User
 from app.services.attempt_service import finalize_attempt
 from app.services.question_cache import get_exam_day_questions_cached
-
+from app.services.exam_runtime_cache import exam_runtime_cache
 from app.schemas.attempt import AttemptStartRequest, AttemptStartResponse
 from app.schemas.answer import AnswerSubmitRequest, AnswerSubmitResponse
 
@@ -44,6 +44,7 @@ from datetime import timedelta
 
 from sqlalchemy.dialects.postgresql import insert
 
+
 # Allow small real-world tolerance
 grace_seconds = 30
 
@@ -62,13 +63,15 @@ class QuestionViewRequest(StrictRequest):
 # ==========================================================
 @router.post("/start", response_model=AttemptStartResponse)
 def start_attempt(
+    request: Request,
     payload: AttemptStartRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     from sqlalchemy.dialects.postgresql import insert
 
-    trace = RequestTrace()
+    trace = RequestTrace(request)
+    trace.mark_endpoint_start()
     request_start = perf_counter()
 
     connection_wait_start = None
@@ -91,6 +94,13 @@ def start_attempt(
             (perf_counter() - connection_wait_start) * 1000,
             2,
         )
+
+        print("\n" + "=" * 60)
+        print("FIRST DATABASE QUERY")
+        print(f"Connection wait: {connection_wait_ms} ms")
+        print(db.bind.pool.status())
+        print("=" * 60 + "\n")
+
 
         logger.info(
             "first_query_completed",
@@ -295,6 +305,9 @@ def start_attempt(
             with trace.measure("returning_fetch"):
                 row = result.fetchone()
     
+            with trace.measure("flush"):
+                db.flush()
+
             with trace.measure("commit"):
                 db.commit()
 
@@ -398,12 +411,6 @@ def start_attempt(
     except Exception:
         total_ms = round((perf_counter() - request_start) * 1000, 2)
 
-        print("\n" + "=" * 80)
-        print("START_ATTEMPT EXCEPTION")
-        print(f"Total: {total_ms} ms")
-        print(trace.summary())
-        print("=" * 80 + "\n")
-
         logger.exception(
             "start_attempt_failed",
             extra={
@@ -412,6 +419,8 @@ def start_attempt(
             },
         )
         raise
+    finally:
+        trace.mark_endpoint_end()
 
 
 # ==========================================================
@@ -423,13 +432,15 @@ from sqlalchemy.orm import joinedload
 
 @router.post("/{attempt_id}/submit-answer", response_model=AnswerSubmitResponse)
 def submit_answer(
+    request: Request,
     attempt_id: UUID,
     payload: AnswerSubmitRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
 
-    trace = RequestTrace()
+    trace = RequestTrace(request)
+    trace.mark_endpoint_start()
     now = datetime.now(timezone.utc)
 
     # ✅ PRE-INITIALIZE
@@ -678,8 +689,60 @@ def submit_answer(
         is_active = attempt.status == AttemptStatus.IN_PROGRESS
         total_hints_used = attempt.hints_used_count or 0
 
+        with trace.measure("flush"):
+            db.flush()
+
         with trace.measure("commit"):
             db.commit()
+
+
+        # ==========================================================
+        # EVENT LOGGING
+        # ==========================================================
+        with trace.measure("event_logging"):
+
+            if is_active:
+
+                try:
+
+                    if answer_changed:
+                        log_attempt_event(
+                            db,
+                            attempt.id,
+                            payload.question_id,
+                            EVENT_ANSWER_CHANGED,
+                        )
+
+                    if payload.hint_used and not hint_already_used:
+                        log_attempt_event(
+                            db,
+                            attempt.id,
+                            payload.question_id,
+                            EVENT_HINT_USED,
+                        )
+
+                except Exception:
+                    logger.exception("Failed to log attempt events")
+
+            logger.info(
+                "submit_answer_profile",
+                extra={
+                    "attempt_id": str(attempt.id),
+                    **trace.summary(),
+                },
+            )
+
+            logger.info(
+                "request_trace",
+                extra=trace.summary(),
+            )
+
+            return AnswerSubmitResponse(
+                is_correct=is_correct,
+                raw_score=float(raw_score),
+                effective_score=float(effective_score),
+                total_hints_used=total_hints_used,
+            )
 
     except IntegrityError:
         db.rollback()
@@ -688,59 +751,19 @@ def submit_answer(
     except Exception:
         db.rollback()
         raise
-    # ==========================================================
-    # EVENT LOGGING
-    # ==========================================================
-    with trace.measure("event_logging"):
 
-        if is_active:
+    finally:
+        trace.mark_endpoint_end()
+    
+    
 
-            try:
-
-                if answer_changed:
-                    log_attempt_event(
-                        db,
-                        attempt.id,
-                        payload.question_id,
-                        EVENT_ANSWER_CHANGED,
-                    )
-
-                if payload.hint_used and not hint_already_used:
-                    log_attempt_event(
-                        db,
-                        attempt.id,
-                        payload.question_id,
-                        EVENT_HINT_USED,
-                    )
-
-            except Exception:
-                logger.exception("Failed to log attempt events")
-
-    logger.info(
-        "submit_answer_profile",
-        extra={
-            "attempt_id": str(attempt.id),
-            **trace.summary(),
-        },
-    )
-
-    logger.info(
-        "request_trace",
-        extra=trace.summary(),
-    )
-
-    return AnswerSubmitResponse(
-        is_correct=is_correct,
-        raw_score=float(raw_score),
-        effective_score=float(effective_score),
-        total_hints_used=total_hints_used,
-    )
 # ==========================================================
 # FINALIZE ATTEMPT
 # ==========================================================
 
 @router.post("/{attempt_id}/finalize")
 def finalize_attempt_endpoint(
+    request: Request,
     attempt_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -751,41 +774,46 @@ def finalize_attempt_endpoint(
     Manual submissions immediately execute the canonical
     finalization pipeline.
     """
+    trace = RequestTrace(request)
+    trace.mark_endpoint_start()
 
-    attempt = (
-        db.query(Attempt)
-        .filter(
-            Attempt.id == attempt_id,
-            Attempt.participant.has(user_id=current_user.id),
-        )
-        .with_for_update()
-        .first()
-    )
-
-    if attempt is None:
-        not_found(
-            ErrorCode.ATTEMPT_NOT_FOUND,
-            "Attempt not found",
+    try:
+        attempt = (
+            db.query(Attempt)
+            .filter(
+                Attempt.id == attempt_id,
+                Attempt.participant.has(user_id=current_user.id),
+            )
+            .with_for_update()
+            .first()
         )
 
-    if attempt.status == AttemptStatus.SUBMITTED:
+        if attempt is None:
+            not_found(
+                ErrorCode.ATTEMPT_NOT_FOUND,
+                "Attempt not found",
+            )
+
+        if attempt.status == AttemptStatus.SUBMITTED:
+            return {
+                "message": "Attempt already submitted"
+            }
+
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            forbidden(
+                ErrorCode.INVALID_ATTEMPT_STATE,
+                "Attempt is not in progress",
+            )
+
+        finalize_attempt(db, attempt)
+
+        db.commit()
+
         return {
-            "message": "Attempt already submitted"
+            "message": "Submission accepted"
         }
-
-    if attempt.status != AttemptStatus.IN_PROGRESS:
-        forbidden(
-            ErrorCode.INVALID_ATTEMPT_STATE,
-            "Attempt is not in progress",
-        )
-
-    finalize_attempt(db, attempt)
-
-    db.commit()
-
-    return {
-        "message": "Submission accepted"
-    }
+    finally:
+        trace.mark_endpoint_end()
 # ==========================================================
 # RESUME ATTEMPT
 # ==========================================================

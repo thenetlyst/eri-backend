@@ -12,6 +12,33 @@ const endpointTrends = {
     reconstruct: new Trend("reconstruct_latency"),
     finalize: new Trend("finalize_latency"),
 };
+
+function logTimings(endpoint, response) {
+    if (__ENV.DEBUG_TIMINGS !== "true") {
+        return;
+    }
+
+    console.log(
+        JSON.stringify(
+            {
+                endpoint,
+                status: response.status,
+                timings: {
+                    blocked: response.timings.blocked,
+                    connecting: response.timings.connecting,
+                    tls_handshaking: response.timings.tls_handshaking,
+                    sending: response.timings.sending,
+                    waiting: response.timings.waiting,
+                    receiving: response.timings.receiving,
+                    duration: response.timings.duration,
+                },
+            },
+            null,
+            2
+        )
+    );
+}
+
 /**
  * Generic GET request.
  */
@@ -26,13 +53,14 @@ export function get(url, headers, expectedStatus = 200, tags = {}) {
         }
     );
 
-
+    logTimings(tags.endpoint, response);
 
     expectStatus(response, expectedStatus);
 
     const trend = endpointTrends[tags.endpoint];
 
-    if (trend) {
+    // Record only successful responses.
+    if (trend && response.status === expectedStatus) {
         trend.add(response.timings.duration);
     }
 
@@ -66,13 +94,36 @@ export function post(
         }
     );
 
+    logTimings(tags.endpoint, response);
 
+    if (response.status === 0) {
+        console.log("================================");
+        console.log("NETWORK FAILURE");
+        console.log("error       :", response.error);
+        console.log("error_code  :", response.error_code);
+        console.log("duration    :", response.timings.duration);
+        console.log("================================");
+    }
+
+    if (__ENV.DEBUG_TIMINGS === "true" && response.status !== expectedStatus) {
+        console.log("========================================");
+        console.log("REQUEST FAILED");
+        console.log("URL        :", url);
+        console.log("STATUS     :", response.status);
+        console.log("ERROR      :", response.error);
+        console.log("ERROR CODE :", response.error_code);
+        console.log("BODY       :", response.body);
+        console.log("HEADERS    :", JSON.stringify(response.headers, null, 2));
+        console.log("TIMINGS    :", JSON.stringify(response.timings, null, 2));
+        console.log("========================================");
+    }
 
     expectStatus(response, expectedStatus);
 
     const trend = endpointTrends[tags.endpoint];
 
-    if (trend) {
+    // Record only successful responses.
+    if (trend && response.status === expectedStatus) {
         trend.add(response.timings.duration);
     }
 

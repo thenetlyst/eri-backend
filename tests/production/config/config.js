@@ -3,8 +3,10 @@
  * Configuration
  */
 
+import { fail } from "k6";
+
 export const CONFIG = {
-    BASE_URL: __ENV.BASE_URL || "http://localhost:8000",
+    BASE_URL: __ENV.BASE_URL || "http://localhost",
 
     EXAM_DAY_ID: __ENV.EXAM_DAY_ID,
 
@@ -29,6 +31,17 @@ export const CONFIG = {
 };
 
 export function validateConfig() {
+
+    if (!CONFIG.BASE_URL) {
+        fail("BASE_URL is required.");
+    }
+
+    if (!CONFIG.EXAM_DAY_ID) {
+        fail(
+            "EXAM_DAY_ID is required. Pass it using -e EXAM_DAY_ID=<uuid>"
+        );
+    }
+
     if (CONFIG.USER_COUNT < CONFIG.DEFAULT_ITERATIONS) {
         console.warn(
             `Warning: USER_COUNT (${CONFIG.USER_COUNT}) is less than ITERATIONS (${CONFIG.DEFAULT_ITERATIONS}). Users will be reused.`
