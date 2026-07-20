@@ -43,7 +43,7 @@ from app.schemas._strict import StrictRequest
 from datetime import timedelta
 
 from sqlalchemy.dialects.postgresql import insert
-
+from app.services.attempt_repository import AttemptRepository
 
 # Allow small real-world tolerance
 grace_seconds = 30
@@ -84,10 +84,9 @@ def start_attempt(
         connection_wait_start = perf_counter()
 
         with trace.measure("exam_day_lookup"):
-            exam_day = (
-                db.query(ExamDay)
-                .filter(ExamDay.id == payload.exam_day_id)
-                .first()
+            exam_day = AttemptRepository.get_exam_day(
+                db,
+                payload.exam_day_id,
             )
 
         connection_wait_ms = round(
@@ -114,10 +113,9 @@ def start_attempt(
             not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Exam day not found")
 
         with trace.measure("challenge_lookup"):
-            challenge = (
-                db.query(Challenge)
-                .filter(Challenge.id == exam_day.challenge_id)
-                .first()
+            challenge = AttemptRepository.get_challenge(
+                db,
+                exam_day.challenge_id,
             )
 
         if not challenge:
@@ -134,13 +132,10 @@ def start_attempt(
    # print("----- DEBUG END -----")
 
         with trace.measure("participant_lookup"):
-            participant = (
-                db.query(Participant)
-                .filter(
-                    Participant.user_id == current_user.id,
-                    Participant.challenge_id == challenge.id,
-                )
-                .first()
+            participant = AttemptRepository.get_participant(
+                db,
+                user_id=current_user.id,
+                challenge_id=challenge.id,
             )
 
         if not participant:
@@ -216,13 +211,10 @@ def start_attempt(
         # PROGRESS
         # ==========================================================
         with trace.measure("progress_lookup"):
-            progress = (
-                db.query(ParticipantProgress)
-                .filter(
-                    ParticipantProgress.challenge_id == challenge.id,
-                    ParticipantProgress.participant_id == participant.id,
-                )
-                .first()
+            progress = AttemptRepository.get_progress(
+                db,
+                participant_id=participant.id,
+                challenge_id=challenge.id,
             )
 
         special_unlocked = False

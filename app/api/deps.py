@@ -61,7 +61,7 @@ def get_current_user(
 
         email = f"loadtest_user_{index}@test.com"
 
-        user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(User.email == email).one_or_none()
 
         if not user:
             print(f"❌ DEV USER NOT FOUND: {email}")
@@ -110,13 +110,13 @@ def get_current_user(
     # -----------------------------
     # PRIMARY LOOKUP (UID)
     # -----------------------------
-    user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+    user = db.query(User).filter(User.firebase_uid == firebase_uid).one_or_none()
 
     # -----------------------------
     # FALLBACK LOOKUP (EMAIL)
     # -----------------------------
     if not user:
-        user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(User.email == email).one_or_none()
 
         if not user:
             unauthorized("User not found", code=ErrorCode.USER_NOT_FOUND)

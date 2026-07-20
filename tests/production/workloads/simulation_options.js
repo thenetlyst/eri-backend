@@ -12,7 +12,7 @@ export function buildSimulationOptions() {
                     scenario: "national_start_burst",
                 },
 
-                startRate: 50,
+                startRate: 25,
 
                 timeUnit: "1s",
 
@@ -23,32 +23,42 @@ export function buildSimulationOptions() {
                 stages: [
 
                     {
+                        target: 25,
+                        duration: "20s",
+                    },
+
+                    {
                         target: 50,
                         duration: "20s",
                     },
 
                     {
+                        target: 75,
+                        duration: "30s",
+                    },
+
+                    {
                         target: 100,
-                        duration: "20s",
+                        duration: "30s",
+                    },
+
+                    {
+                        target: 125,
+                        duration: "30s",
                     },
 
                     {
                         target: 150,
-                        duration: "20s",
-                    },
-
-                    {
-                        target: 210,
                         duration: "60s",
                     },
 
                     {
-                        target: 100,
+                        target: 75,
                         duration: "60s",
                     },
 
                     {
-                        target: 20,
+                        target: 10,
                         duration: "60s",
                     },
 

@@ -33,9 +33,18 @@ export function getHeaders(userNumber) {
 
 export function getUserNumber() {
 
-    const userNumber =
-        CONFIG.USER_START +
-        (exec.scenario.iterationInTest % CONFIG.USER_COUNT);
+    if (exec.scenario.iterationInTest >= CONFIG.USER_COUNT) {
 
-    return userNumber;
+        throw new Error(
+            `User pool exhausted after ${CONFIG.USER_COUNT} participants. ` +
+            `Increase USER_COUNT and provision more test users.`
+        );
+
+    }
+
+    return (
+        CONFIG.USER_START +
+        exec.scenario.iterationInTest
+    );
+
 }

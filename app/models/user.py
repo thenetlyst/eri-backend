@@ -13,7 +13,7 @@ class User(Base):
 
     firebase_uid = Column(String, unique=True, nullable=True, index=True)
 
-    email = Column(String, nullable=False, index=True)
+    email = Column(String, nullable=False, unique=True, index=True)
 
     participant_code = Column(String, unique=True, nullable=True, index=True)
 
