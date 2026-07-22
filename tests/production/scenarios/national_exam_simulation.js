@@ -16,7 +16,7 @@ export function setup() {
 // -----------------------------------------------------------------------------
 
 const START_JITTER_SECONDS =
-    Number(__ENV.START_JITTER_SECONDS || 5);
+    Number(__ENV.START_JITTER_SECONDS || 1.5);
 
 const MODE =
     __ENV.MODE || "finalize";
@@ -25,7 +25,7 @@ const MODE =
 // Production traffic profile
 //
 
-const WARMUP_RATE =
+/*const WARMUP_RATE =
     Number(__ENV.WARMUP_RATE || 8);
 
 const RAMP_RATE =
@@ -38,14 +38,60 @@ const TAPER_RATE =
     Number(__ENV.TAPER_RATE || 14);
 
 const FINAL_RATE =
-    Number(__ENV.FINAL_RATE || 8);
+    Number(__ENV.FINAL_RATE || 8);*/
+
+const EVENT = {
+    participants: Number(__ENV.PARTICIPANTS || 25000),
+
+    early: {
+        duration: "10m",
+        percentage: 0.45,
+    },
+
+    middle: {
+        duration: "20m",
+        percentage: 0.40,
+    },
+
+    late: {
+        duration: "15m",
+        percentage: 0.15,
+    },
+};
+
+function rate(percent, minutes) {
+
+    return Math.ceil(
+
+        EVENT.participants *
+        percent /
+        (minutes * 60)
+
+    );
+
+}
+
+const EARLY_RATE = rate(
+    EVENT.early.percentage,
+    parseInt(EVENT.early.duration)
+);
+
+const MIDDLE_RATE = rate(
+    EVENT.middle.percentage,
+    parseInt(EVENT.middle.duration)
+);
+
+const LATE_RATE = rate(
+    EVENT.late.percentage,
+    parseInt(EVENT.late.duration)
+);
 
 //
 // Virtual User Pool
 //
 
 const PRE_ALLOCATED_VUS =
-    Number(__ENV.PRE_ALLOCATED_VUS || 1000);
+    Number(__ENV.PRE_ALLOCATED_VUS || 10000);
 
 const MAX_VUS =
     Number(__ENV.MAX_VUS || 30000);
@@ -68,7 +114,7 @@ export const options = {
             //
 
             startRate:
-                Number(__ENV.START_RATE || 5),
+                Number(__ENV.START_RATE || 1),
 
             timeUnit: "1s",
 
@@ -90,61 +136,27 @@ export const options = {
 
             stages: [
 
-                //
-                // Early arrivals
-                //
-
                 {
-                    duration: "5m",
-                    target: WARMUP_RATE,
+                    duration: EVENT.early.duration,
+                    target: EARLY_RATE,
                 },
 
-                //
-                // Main ramp
-                //
-
                 {
-                    duration: "5m",
-                    target: PEAK_RATE,
+                    duration: EVENT.middle.duration,
+                    target: MIDDLE_RATE,
                 },
 
-                //
-                // National peak
-                //
-
                 {
-                    duration: "5m",
-                    target: PEAK_RATE,
+                    duration: EVENT.late.duration,
+                    target: LATE_RATE,
                 },
-
-                //
-                // Late arrivals
-                //
-
-//                {
-//                   duration: "5m",
-//                   target: TAPER_RATE,
-//                },
-
-                //
-                // Final participants
-                //
-
-//                {
-//                    duration: "5m",
-//                    target: FINAL_RATE,
-//                },
-
-                //
-                // End event
-                //
 
                 {
                     duration: "1s",
                     target: 0,
                 },
 
-            ],
+            ]
 
         },
 

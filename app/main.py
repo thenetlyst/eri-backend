@@ -35,6 +35,7 @@ from app.db.session import (
     active_connections,
     _pool_lock,
 )
+from app.middleware.request_timeline import RequestTimelineMiddleware
 
 
 # ----------------------------------------------------------
@@ -74,7 +75,9 @@ def print_api_stats():
 
 app = FastAPI(title="ERI Assessment Engine")
 
-app.add_middleware(RequestProfilerMiddleware)
+app.add_middleware(RequestTimelineMiddleware)
+
+#app.add_middleware(RequestProfilerMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -169,10 +172,11 @@ async def request_logging_middleware(request: Request, call_next):
         response.headers["X-DB-Queries"] = str(queries)
 
     else:
-        logger.info(
-            f"⚡ {request.method} {request.url.path} | {total_ms} ms",
-            extra={"request_id": request_id},
-        )
+        pass
+#        logger.info(
+#            f"⚡ {request.method} {request.url.path} | {total_ms} ms",
+#            extra={"request_id": request_id},
+#        )
 
     # ------------------------------------------------------
     # Standard response headers

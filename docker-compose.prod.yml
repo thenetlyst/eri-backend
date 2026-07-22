@@ -21,6 +21,9 @@ services:
       postgres
       -c max_connections=400
       -c password_encryption=scram-sha-256
+      -c shared_preload_libraries=pg_stat_statements
+      -c track_io_timing=on
+      -c pg_stat_statements.track=all
 
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U exam_user -d exam_platform"]
@@ -54,7 +57,7 @@ services:
 
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
-      DEFAULT_POOL_SIZE: 200
+      DEFAULT_POOL_SIZE: 100
       RESERVE_POOL_SIZE: 50
 
       AUTH_TYPE: plain
@@ -120,6 +123,12 @@ services:
 
     restart: unless-stopped
 
+    cap_add:
+      - SYS_PTRACE
+
+    security_opt:
+      - seccomp:unconfined
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -139,7 +148,7 @@ services:
       - -k
       - uvicorn.workers.UvicornWorker
       - -w
-      - "6"
+      - "3"
       - --bind
       - 0.0.0.0:8000
       - --backlog
@@ -150,10 +159,10 @@ services:
       - "30"
       - --keep-alive
       - "30"
-      - --access-logfile
-      - "-"
-      - --error-logfile
-      - "-"
+#      - --access-logfile
+#      - "-"
+#      - --error-logfile
+#      - "-"
     ulimits:
       nofile:
         soft: 65536
@@ -162,65 +171,71 @@ services:
   # -------------------------
   # 🚀 BACKEND 2
   # -------------------------
-#  eri-backend-2:
-#    build: .
-#    container_name: eri-backend-2
-#    ports:
-#      - "8002:8000"
-#    depends_on:
-#      migrations:
-#        condition: service_completed_successfully
-#      exam_db:
-#        condition: service_started
-#    env_file:
-#      - .env.production
-#    environment:
-#      - ENABLE_API_STATS=false
-#      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
+  eri-backend-2:
+    build: .
+    container_name: eri-backend-2
+    ports:
+      - "8002:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      exam_db:
+        condition: service_started
+    env_file:
+      - .env.production
+    environment:
+      - ENABLE_API_STATS=false
+      - DATABASE_URL=postgresql://exam_user:exam_password@pgbouncer:5432/exam_platform
     
-#    volumes:
-#      - ./firebase_service_account.json:/app/firebase_service_account.json:ro
-#
-#    restart: unless-stopped
-#
-#    healthcheck:
-#      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
-#      interval: 30s
-#      timeout: 10s
-#      retries: 3
-#      start_period: 40s
+    volumes:
+      - ./firebase_service_account.json:/app/firebase_service_account.json:ro
 
-#    logging:
-#      driver: json-file
-#      options:
-#        max-size: "20m"
-#        max-file: "5"
+    restart: unless-stopped
 
-#    command:
-#      - gunicorn
-#      - app.main:app
-#      - -k
-#      - uvicorn.workers.UvicornWorker
-#      - -w
-#      - "4"
-#      - --bind
-#      - 0.0.0.0:8000
-#      - --backlog
-#      - "2048"
-#      - --timeout
-#      - "60"
-#      - --graceful-timeout
-#      - "30"
-#      - --keep-alive
-#      - "30"
+    cap_add:
+      - SYS_PTRACE
+
+    security_opt:
+      - seccomp:unconfined
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    command:
+      - gunicorn
+      - app.main:app
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - -w
+      - "3"
+      - --bind
+      - 0.0.0.0:8000
+      - --backlog
+      - "2048"
+      - --timeout
+      - "60"
+      - --graceful-timeout
+      - "30"
+      - --keep-alive
+      - "30"
 #      - --access-logfile
 #      - "-"
 #      - --error-logfile
 #      - "-"
-#    ulimits:
-#      nofile:
-#        soft: 65536
-#        hard: 65536
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   nginx:
     image: nginx:1.27-alpine
@@ -229,8 +244,8 @@ services:
     depends_on:
       eri-backend-1:
         condition: service_started
-#      eri-backend-2:
-#        condition: service_started
+      eri-backend-2:
+        condition: service_started
 
     ports:
       - "80:80"

@@ -23,27 +23,27 @@ export function buildSimulationOptions() {
                 stages: [
 
                     {
-                        target: 25,
-                        duration: "20s",
-                    },
-
-                    {
-                        target: 50,
-                        duration: "20s",
-                    },
-
-                    {
-                        target: 75,
-                        duration: "30s",
-                    },
-
-                    {
                         target: 100,
-                        duration: "30s",
+                        duration: "20s",
                     },
 
                     {
                         target: 125,
+                        duration: "20s",
+                    },
+
+                    {
+                        target: 200,
+                        duration: "30s",
+                    },
+
+                    {
+                        target: 200,
+                        duration: "30s",
+                    },
+
+                    {
+                        target: 200,
                         duration: "30s",
                     },
 
@@ -53,12 +53,12 @@ export function buildSimulationOptions() {
                     },
 
                     {
-                        target: 75,
+                        target: 125,
                         duration: "60s",
                     },
 
                     {
-                        target: 10,
+                        target: 75,
                         duration: "60s",
                     },
 

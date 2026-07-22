@@ -19,7 +19,7 @@ from app.core.request_context import (
 security = HTTPBearer()
 
 logger = logging.getLogger(__name__)
-
+#from sqlalchemy import text
 
 # -----------------------------
 # AUTH Dependency (UNCHANGED LOGIC)
@@ -61,8 +61,34 @@ def get_current_user(
 
         email = f"loadtest_user_{index}@test.com"
 
-        user = db.query(User).filter(User.email == email).one_or_none()
+        lookup_start = perf_counter()
 
+        user = (
+            db.query(User)
+                .filter(User.email == email)
+                .one_or_none()
+        )
+ #       backend_pid = db.execute(text("SELECT pg_backend_pid()")).scalar_one()
+        logger.info(
+            "AUTH_QUERY_RETURNED",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
+
+        lookup_ms = round(
+            (perf_counter() - lookup_start) * 1000,
+            3,
+        )
+        
+        logger.info(
+            "AUTH_LOOKUP",
+            extra={
+                "request_id": get_request_id(),
+                "lookup_ms": lookup_ms,
+            },
+        )
+        
         if not user:
             print(f"❌ DEV USER NOT FOUND: {email}")
             unauthorized("User not found", code=ErrorCode.USER_NOT_FOUND)
@@ -77,6 +103,25 @@ def get_current_user(
                 "elapsed_ms": elapsed_ms(),
                 "mode": "dev",
                 "duration_ms": duration_ms,
+            },
+        )
+
+        logger.info(
+            "SESSION_STATE",
+            extra={
+                "request_id": get_request_id(),
+                "email": user.email,
+                "in_transaction": db.in_transaction(),
+                "is_active": db.is_active,
+            },
+        )
+        logger.info(
+            "AUTH_RETURN_USER",
+            extra={
+                "request_id": get_request_id(),
+                "user_id": str(user.id),
+                "email": user.email,
+ #               "pg_pid": backend_pid,
             },
         )
 
@@ -143,6 +188,14 @@ def get_current_user(
             "elapsed_ms": elapsed_ms(),
             "mode": "firebase",
             "duration_ms": duration_ms,
+        },
+    )
+
+
+    logger.info(
+        "AUTH_RETURN_USER",
+        extra={
+            "request_id": get_request_id(),
         },
     )
 

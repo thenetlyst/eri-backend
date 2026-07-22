@@ -7,6 +7,7 @@ import logging
 from time import perf_counter
 
 from app.core.request_trace import RequestTrace
+from app.core.request_context import get_request_id
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
@@ -72,6 +73,12 @@ def start_attempt(
 
     trace = RequestTrace(request)
     trace.mark_endpoint_start()
+    logger.info(
+        "START_ATTEMPT_ENTER",
+        extra={
+            "request_id": get_request_id(),
+        },
+    )
     request_start = perf_counter()
 
     connection_wait_start = None
@@ -83,23 +90,17 @@ def start_attempt(
         # ==========================================================
         connection_wait_start = perf_counter()
 
-        with trace.measure("exam_day_lookup"):
-            exam_day = AttemptRepository.get_exam_day(
-                db,
-                payload.exam_day_id,
+        with trace.measure("start_context_lookup"):
+            ctx = AttemptRepository.get_start_attempt_context(
+                db=db,
+                exam_day_id=payload.exam_day_id,
+                user_id=current_user.id,
             )
 
         connection_wait_ms = round(
             (perf_counter() - connection_wait_start) * 1000,
             2,
         )
-
-        print("\n" + "=" * 60)
-        print("FIRST DATABASE QUERY")
-        print(f"Connection wait: {connection_wait_ms} ms")
-        print(db.bind.pool.status())
-        print("=" * 60 + "\n")
-
 
         logger.info(
             "first_query_completed",
@@ -109,62 +110,19 @@ def start_attempt(
             },
         )
 
-        if not exam_day:
-            not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Exam day not found")
-
-        with trace.measure("challenge_lookup"):
-            challenge = AttemptRepository.get_challenge(
-                db,
-                exam_day.challenge_id,
-            )
-
-        if not challenge:
-            not_found(ErrorCode.ATTEMPT_NOT_FOUND, "Challenge not found")
-
-        if challenge.status != ChallengeStatus.ACTIVE:
-            forbidden(ErrorCode.FORBIDDEN, "Challenge not active")
-
-   # print("----- DEBUG START -----")
-   # print("current_user.id:", current_user.id)
-   # print("type(current_user.id):", type(current_user.id))
-   # print("challenge.id:", challenge.id)
-   # print("type(challenge.id):", type(challenge.id))
-   # print("----- DEBUG END -----")
-
-        with trace.measure("participant_lookup"):
-            participant = AttemptRepository.get_participant(
-                db,
-                user_id=current_user.id,
-                challenge_id=challenge.id,
-            )
-
-        if not participant:
-            logger.warning(
-                "start_attempt_failed_validation",
-                extra={
-                    "stage": "participant_lookup",
-                    "reason": "participant_not_found",
-                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
-                    "trace": trace.summary(),
-                },
-            )
-
+        if ctx is None:
             forbidden(
                 ErrorCode.FORBIDDEN,
                 "User not enrolled for this challenge",
             )
 
-        if participant.account_status != AccountStatus.ACTIVE:
-            logger.warning(
-                "start_attempt_failed_validation",
-                extra={
-                    "stage": "participant_lookup",
-                    "reason": "participant_inactive",
-                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
-                    "trace": trace.summary(),
-                },
+        if ctx.challenge_status != ChallengeStatus.ACTIVE:
+            forbidden(
+                ErrorCode.FORBIDDEN,
+                "Challenge not active",
             )
 
+        if ctx.account_status != AccountStatus.ACTIVE:
             forbidden(
                 ErrorCode.FORBIDDEN,
                 "Participant account not active",
@@ -173,59 +131,30 @@ def start_attempt(
         now = datetime.now(timezone.utc)
 
         if (
-            now < exam_day.window_start - timedelta(seconds=grace_seconds)
-            or now > exam_day.window_end + timedelta(seconds=grace_seconds)
+            now < ctx.window_start - timedelta(seconds=grace_seconds)
+            or now > ctx.window_end + timedelta(seconds=grace_seconds)
         ):
-            logger.warning(
-                "start_attempt_failed_validation",
-                extra={
-                    "stage": "window_validation",
-                    "reason": "window_closed",
-                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
-                    "trace": trace.summary(),
-                },
-            )
-
             forbidden(
                 ErrorCode.WINDOW_CLOSED,
                 "Exam window not active",
             )
 
-        if exam_day.is_force_locked:
-            logger.warning(
-                "start_attempt_failed_validation",
-                extra={
-                    "stage": "window_validation",
-                    "reason": "force_locked",
-                    "total_ms": round((perf_counter() - request_start) * 1000, 2),
-                    "trace": trace.summary(),
-                },
-            )
-
+        if ctx.is_force_locked:
             forbidden(
                 ErrorCode.FORCE_LOCKED,
                 "Exam is force locked",
             )
 
-        # ==========================================================
-        # PROGRESS
-        # ==========================================================
-        with trace.measure("progress_lookup"):
-            progress = AttemptRepository.get_progress(
-                db,
-                participant_id=participant.id,
-                challenge_id=challenge.id,
-            )
-
-        special_unlocked = False
-        if progress and progress.days_completed >= 2:
-            special_unlocked = progress.eligible_for_bonus_next_day
+        special_unlocked = (
+            ctx.days_completed >= 2
+            and ctx.eligible_for_bonus_next_day
+        )
 
         # ==========================================================
         # QUESTIONS (CACHE)
         # ==========================================================
         with trace.measure("question_cache"):
-            questions_map = get_exam_day_questions_cached(str(exam_day.id))
+            questions_map = get_exam_day_questions_cached(str(ctx.exam_day_id))
 
         questions = list(questions_map.values())
 
@@ -263,9 +192,9 @@ def start_attempt(
         # ==========================================================
         stmt = insert(Attempt).values(
             id=uuid.uuid4(),
-            challenge_id=challenge.id,
-            participant_id=participant.id,
-            exam_day_id=exam_day.id,
+            challenge_id=ctx.challenge_id,
+            participant_id=ctx.participant_id,
+            exam_day_id=ctx.exam_day_id,
             status=AttemptStatus.IN_PROGRESS,
             special_unlocked=special_unlocked,
             started_at=now,
@@ -297,8 +226,8 @@ def start_attempt(
             with trace.measure("returning_fetch"):
                 row = result.fetchone()
     
-            with trace.measure("flush"):
-                db.flush()
+#            with trace.measure("flush"):
+#                db.flush()
 
             with trace.measure("commit"):
                 db.commit()
@@ -327,7 +256,7 @@ def start_attempt(
             logger.info(
                 "start_attempt_profile",
                 extra={
-                    "participant_id": str(participant.id),
+                    "participant_id": str(ctx.participant_id),
                     "attempt_created": True,
                     "total_ms": total_ms,
                     "connection_wait_ms": connection_wait_ms,
@@ -335,12 +264,12 @@ def start_attempt(
                     "trace": trace.summary(),
                 },
             )
-            print("\n" + "=" * 80)
-            print("START_ATTEMPT PROFILE")
-            print(f"Total: {total_ms} ms")
-            print(f"Connection wait: {connection_wait_ms} ms")
-            print(trace.summary())
-            print("=" * 80 + "\n")
+#            print("\n" + "=" * 80)
+#            print("START_ATTEMPT PROFILE")
+#            print(f"Total: {total_ms} ms")
+#            print(f"Connection wait: {connection_wait_ms} ms")
+#            print(trace.summary())
+#            print("=" * 80 + "\n")
 
 
             return response
@@ -352,8 +281,8 @@ def start_attempt(
             attempt = (
                 db.query(Attempt)
                 .filter(
-                    Attempt.participant_id == participant.id,
-                    Attempt.exam_day_id == exam_day.id,
+                    Attempt.participant_id == ctx.participant_id,
+                    Attempt.exam_day_id == ctx.exam_day_id,
                 )
                 .first()
             )
@@ -383,7 +312,7 @@ def start_attempt(
         logger.info(
             "start_attempt_profile",
             extra={
-                "participant_id": str(participant.id),
+                "participant_id": str(ctx.participant_id),
                 "attempt_created": False,
                 "total_ms": total_ms,
                 "connection_wait_ms": connection_wait_ms,
@@ -391,12 +320,12 @@ def start_attempt(
                 "trace": trace.summary(),
             },
         )
-        print("\n" + "=" * 80)
-        print("START_ATTEMPT FALLBACK")
-        print(f"Total: {total_ms} ms")
-        print(f"Connection wait: {connection_wait_ms} ms")
-        print(trace.summary())
-        print("=" * 80 + "\n")
+#        print("\n" + "=" * 80)
+#        print("START_ATTEMPT FALLBACK")
+#        print(f"Total: {total_ms} ms")
+#        print(f"Connection wait: {connection_wait_ms} ms")
+#        print(trace.summary())
+#        print("=" * 80 + "\n")
 
         return response
     
@@ -412,7 +341,19 @@ def start_attempt(
         )
         raise
     finally:
+        logger.info(
+            "START_ATTEMPT_FINALLY",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
         trace.mark_endpoint_end()
+        logger.info(
+            "START_ATTEMPT_EXIT",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
 
 
 # ==========================================================

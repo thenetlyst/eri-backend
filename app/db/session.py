@@ -71,6 +71,15 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
     connection_record.info["checkout_time"] = time.perf_counter()
     connection_uuid = str(uuid.uuid4())
     connection_record.info["connection_uuid"] = connection_uuid
+    logger.info(
+        "POOL_CHECKOUT",
+        extra={
+            "request_id": get_request_id(),
+            "ts": round(time.perf_counter(), 6),
+            "connection": connection_uuid,
+        },
+    )
+    
     connection_record.info["first_query_time"] = None
     connection_record.info["last_query_time"] = None
     connection_record.info["last_query_sql"] = None
@@ -88,6 +97,7 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
 #        "[POOL] CHECKOUT %s",
 #        connection_uuid,
 #    )
+
 
     with _pool_lock:
         active_connections[connection_uuid] = {
@@ -118,6 +128,15 @@ def checkin(dbapi_connection, connection_record):
     connection_uuid = connection_record.info.pop(
         "connection_uuid",
         None,
+    )
+
+    logger.info(
+        "POOL_CHECKIN",
+        extra={
+            "request_id": get_request_id(),
+            "ts": round(time.perf_counter(), 6),
+            "connection": connection_uuid,
+        },
     )
 
     start = connection_record.info.pop("checkout_time", None)
@@ -207,7 +226,7 @@ def checkin(dbapi_connection, connection_record):
             "================ CONNECTION TIMELINE ================\n"
             "Held                : %.2f ms\n"
             "Checkout -> SQL     : %s ms\n"
-            "SQL Active          : %s ms\n"
+            "SQL Window         : %s ms\n"
             "SQL -> Checkin      : %s ms\n"
             "Queries             : %d\n"
             "Checked Out         : %d\n"
@@ -264,6 +283,21 @@ def before_cursor_execute(
     if info.get("first_query_time") is None:
         info["first_query_time"] = now
 
+    request_id = get_request_id()
+
+    connection_uuid = info.get("connection_uuid")
+
+    logger.info(
+        "SQL_START",
+        extra={
+            "request_id": get_request_id(),
+            "connection": connection_uuid,
+            "ts": round(now, 6),
+            "sql": statement[:120].replace("\n", " "),
+        },
+    )
+
+    context._eri_query_start = now
 
 
 @event.listens_for(engine, "after_cursor_execute")
@@ -278,11 +312,31 @@ def after_cursor_execute(
     record = conn.connection._connection_record
     info = record.info
 
-    info["last_query_time"] = time.perf_counter()
+    now = time.perf_counter()
+
+    info["last_query_time"] = now
     info["last_query_sql"] = statement[:120]
     info["query_count"] += 1
 
+    start = getattr(context, "_eri_query_start", None)
 
+    duration = None
+
+    if start is not None:
+        duration = round((now - start) * 1000, 3)
+
+    connection_uuid = info.get("connection_uuid")
+
+    logger.info(
+        "SQL_END",
+        extra={
+            "request_id": get_request_id(),
+            "connection": connection_uuid,
+            "ts": round(now, 6),
+            "duration_ms": duration,
+            "sql": statement[:120].replace("\n", " "),
+        },
+    )
 
 # --------------------------------------------------
 # Session factory (UNCHANGED)
@@ -305,10 +359,31 @@ def get_db():
 
     db: Session = SessionLocal()
 
+    logger.info(
+        "DB_SESSION_ENTER",
+        extra={
+            "request_id": get_request_id(),
+        },
+    )
+
     try:
         yield db
 
+        logger.info(
+            "DB_SESSION_EXIT",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
+
     finally:
+
+        logger.info(
+            "DB_SESSION_FINALLY_START",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
 
         lifetime_ms = round(
             (perf_counter() - session_start) * 1000,
@@ -317,7 +392,32 @@ def get_db():
 
         close_start = perf_counter()
 
+        try:
+            db.rollback()
+
+            logger.info(
+                "DB_SESSION_ROLLBACK",
+                extra={
+                    "request_id": get_request_id(),
+                },
+            )
+
+        except Exception:
+            logger.exception(
+                "DB_SESSION_ROLLBACK_FAILED",
+                extra={
+                    "request_id": get_request_id(),
+                },
+            )
+
         db.close()
+
+        logger.info(
+            "DB_SESSION_CLOSED",
+            extra={
+                "request_id": get_request_id(),
+            },
+        )
 
         close_ms = round(
             (perf_counter() - close_start) * 1000,
@@ -325,7 +425,7 @@ def get_db():
         )
 
         logger.info(
-            "db_session_close",
+            "DB_SESSION_FINALLY_END",
             extra={
                 "request_id": get_request_id(),
                 "session_lifetime_ms": lifetime_ms,
