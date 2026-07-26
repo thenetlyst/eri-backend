@@ -1,10 +1,8 @@
-import os
+
 import uuid
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
-import logging
-from time import perf_counter
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
@@ -14,24 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import get_db, get_current_user
 from app.models.attempt import Attempt, AttemptStatus
 from app.models.participant import Participant, AccountStatus
-from app.models.exam_day import ExamDay
-from app.models.question import Question
 from app.models.attempt_answer import AttemptAnswer
-from app.models.participant_progress import ParticipantProgress
-from app.models.challenge import Challenge, ChallengeStatus
 from app.models.user import User
 from app.services.attempt_service import finalize_attempt
 from app.services.question_cache import get_exam_day_questions_cached
-from app.services.exam_runtime_cache import exam_runtime_cache
-from app.schemas.attempt import AttemptStartRequest, AttemptStartResponse
 from app.schemas.answer import AnswerSubmitRequest, AnswerSubmitResponse
 
 # ✅ NEW CONTRACT
 from app.core.errors import forbidden, not_found, conflict
 from app.core.error_codes import ErrorCode
-
-from app.schemas._strict import StrictRequest
-from datetime import timedelta
 
 from sqlalchemy.dialects.postgresql import insert
 from app.services.attempt_repository import AttemptRepository
@@ -41,8 +30,6 @@ grace_seconds = 30
 
 
 import logging
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

@@ -1,8 +1,5 @@
-import logging
 
 from datetime import datetime, timezone
-from time import perf_counter
-
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
@@ -22,12 +19,7 @@ from app.core.errors import (
 )
 
 from app.core.error_codes import ErrorCode
-from app.core.request_trace import RequestTrace
-from app.core.request_context import get_request_id
-
 router = APIRouter(tags=["Attempt Activation"])
-
-logger = logging.getLogger(__name__)
 
 # ==========================================================
 # ACTIVATE ATTEMPT
@@ -39,31 +31,19 @@ def activate_attempt(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    trace = RequestTrace(request)
-    trace.mark_endpoint_start()
-
-    logger.info(
-        "ACTIVATE_ATTEMPT_ENTER",
-        extra={
-            "request_id": get_request_id(),
-        },
-    )
-
-    request_start = perf_counter()
 
     try:
         now = datetime.now(timezone.utc)
 
-        with trace.measure("attempt_lock"):
-            attempt = (
-                db.query(Attempt)
-                .filter(
-                    Attempt.exam_day_id == payload.exam_day_id,
-                    Attempt.participant.has(user_id=current_user.id),
-                )
-                .with_for_update()
-                .first()
+        attempt = (
+            db.query(Attempt)
+            .filter(
+                Attempt.exam_day_id == payload.exam_day_id,
+                Attempt.participant.has(user_id=current_user.id),
             )
+            .with_for_update()
+            .first()
+        )
 
         # ------------------------------------------------------
         # Attempt not found
@@ -88,19 +68,6 @@ def activate_attempt(
         # Idempotent activation
         # ------------------------------------------------------
         if attempt.status == AttemptStatus.IN_PROGRESS:
-
-            logger.info(
-                "activate_attempt_profile",
-                extra={
-                    "participant_id": str(attempt.participant_id),
-                    "already_active": True,
-                    "total_ms": round(
-                        (perf_counter() - request_start) * 1000,
-                        2,
-                    ),
-                    "trace": trace.summary(),
-                },
-            )
 
             return AttemptStartResponse(
                 attempt_id=attempt.id,
@@ -129,27 +96,9 @@ def activate_attempt(
         attempt.status = AttemptStatus.IN_PROGRESS
         attempt.started_at = now
         attempt.attendance_flag = True
+        db.flush()
 
-        with trace.measure("db_write"):
-
-            with trace.measure("flush"):
-                db.flush()
-
-            with trace.measure("commit"):
-                db.commit()
-
-        logger.info(
-            "activate_attempt_profile",
-            extra={
-                "participant_id": str(attempt.participant_id),
-                "already_active": False,
-                "total_ms": round(
-                    (perf_counter() - request_start) * 1000,
-                    2,
-                ),
-                "trace": trace.summary(),
-            },
-        )
+        db.commit()
 
         return AttemptStartResponse(
             attempt_id=attempt.id,
@@ -161,13 +110,3 @@ def activate_attempt(
         if db.is_active:
             db.rollback()
         raise
-
-    finally:
-        trace.mark_endpoint_end()
-
-        logger.info(
-            "ACTIVATE_ATTEMPT_EXIT",
-            extra={
-                "request_id": get_request_id(),
-            },
-        )

@@ -13,18 +13,11 @@ from app.models.attempt_answer import AttemptAnswer
 from app.services.attempt_service import finalize_attempt
 from app.services.question_cache import get_exam_day_questions_cached
 
-from time import perf_counter
-import logging
-import threading
-import os
 from app.core.exceptions import (
     NotFoundException,
     ForbiddenException,
 )
 from app.models.participant import Participant
-
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Questions"])
 
@@ -40,17 +33,6 @@ def list_questions(
 ):
     
     try:
-
-        request_start = perf_counter()
-
-        print("\n========================================")
-        print("ENTER list_questions")
-        print(f"PID       = {os.getpid()}")
-        print(f"Thread    = {threading.get_ident()}")
-        print(f"attempt_id = {attempt_id}")
-        print("========================================")
-
-        lookup_start = perf_counter()
 
         attempt_result = (
             db.query(
@@ -71,19 +53,6 @@ def list_questions(
             raise NotFoundException("Attempt not found")
 
         attempt, participant_user_id = attempt_result
-
-        print("✓ Attempt lookup complete")
-
-        if attempt:
-            print(f"status={attempt.status}")
-            print(f"exam_day_id={attempt.exam_day_id}")
-        else:
-            print("Attempt NOT FOUND")
-
-        logger.info(
-            "LIST_QUESTIONS attempt_lookup_ms=%.2f",
-            (perf_counter() - lookup_start) * 1000,
-        )
     
         if participant_user_id != current_user.id:
             raise ForbiddenException("Unauthorized access to attempt")
@@ -91,24 +60,12 @@ def list_questions(
         if attempt.status == AttemptStatus.SUBMITTED:
             raise ForbiddenException("Attempt already completed")
 
-        # ⭐ CACHE HIT
-        cache_start = perf_counter()
-
         cached_questions = get_exam_day_questions_cached(
             str(attempt.exam_day_id)
         )
 
-        print(f"✓ Cache lookup complete ({len(cached_questions)} cached questions)")
-
-        logger.info(
-            "LIST_QUESTIONS cache_lookup_ms=%.2f",
-            (perf_counter() - cache_start) * 1000,
-        )
-
         # IMPORTANT → copy before use
         questions = [q.copy() for q in cached_questions.values()]
-
-        answers_start = perf_counter()
 
         answers = (
             db.query(AttemptAnswer.question_id)
@@ -118,23 +75,12 @@ def list_questions(
             .all()
         )
 
-        print(f"✓ Answers loaded ({len(answers)} answers)")
-
-        logger.info(
-            "LIST_QUESTIONS answers_query_ms=%.2f",
-            (perf_counter() - answers_start) * 1000,
-        )
-
         answered_map = {
             str(question_id): True
             for (question_id,) in answers
         }
 
-        build_start = perf_counter()
-
         result = []
-
-        print("Building manifest...")
 
         question_special = {}
         total_base = 0
@@ -177,29 +123,8 @@ def list_questions(
                 }
             )
 
-        logger.info(
-            "LIST_QUESTIONS build_manifest_ms=%.2f",
-            (perf_counter() - build_start) * 1000,
-        )
-
-        logger.info(
-            "LIST_QUESTIONS total_ms=%.2f",
-            (perf_counter() - request_start) * 1000,
-        )
-
-        print(f"✓ Returning manifest ({len(result)} questions)")
-        print("EXIT list_questions")
-        print("========================================\n")
-
         return result
-    except Exception as e:
-        import traceback
-
-        print("\nXXXXXXXX LIST_QUESTIONS EXCEPTION XXXXXXXX")
-        print(e)
-        traceback.print_exc()
-        print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-
+    except Exception:
         raise
 
 # ==========================================================

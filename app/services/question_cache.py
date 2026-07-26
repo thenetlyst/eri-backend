@@ -18,8 +18,6 @@ def get_exam_day_questions_map(exam_day_id: str) -> Dict[str, dict]:
 
     with _cache_lock:
 
-        print("🔥 DB HIT → loading questions")
-
         db = SessionLocal()
 
         try:

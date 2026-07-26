@@ -8,18 +8,10 @@ from app.core.firebase import verify_firebase_token
 from app.core.errors import unauthorized
 from app.core.error_codes import ErrorCode
 
-import logging
-from time import perf_counter
-
-from app.core.request_context import (
-    get_request_id,
-    elapsed_ms,
-)
 from sqlalchemy.orm import make_transient
 
 security = HTTPBearer()
 
-logger = logging.getLogger(__name__)
 #from sqlalchemy import text
 
 # -----------------------------
@@ -41,16 +33,6 @@ def get_current_user(
         - Firebase verification
         - UID + email lookup
         """
-        auth_start = perf_counter()
-
-        logger.info(
-            "AUTH_ENTER",
-            extra={
-                "request_id": get_request_id(),
-                "elapsed_ms": elapsed_ms(),
-            },
-        )
-
 
         # -----------------------------
         # 1. Validate token presence
@@ -60,11 +42,6 @@ def get_current_user(
             return
 
         token = credentials.credentials
-
-        logger.info(
-            "TOKEN_PARSED",
-            extra={"request_id": get_request_id(),"elapsed_ms": elapsed_ms(),},
-        )
 
         # -----------------------------
         # 🔥 DEV MODE DIRECT HANDLING
@@ -77,91 +54,17 @@ def get_current_user(
 
             email = f"loadtest_user_{index}@test.com"
 
-            lookup_start = perf_counter()
-
-            logger.info(
-                "USER_LOOKUP_BEGIN",
-                extra={"request_id": get_request_id(),"elapsed_ms": elapsed_ms(),},
-            )
-
             user = (
                 db.query(User)
                     .filter(User.email == email)
                     .one_or_none()
             )
 
-            logger.info(
-                "USER_LOOKUP_END",
-                extra={
-                    "request_id": get_request_id(),
-                    "elapsed_ms": elapsed_ms(),
-                },
-            )
  #       backend_pid = db.execute(text("SELECT pg_backend_pid()")).scalar_one()
-            logger.info(
-                "AUTH_QUERY_RETURNED",
-                extra={
-                    "request_id": get_request_id(),
-                    "elapsed_ms": elapsed_ms(),
-                },
-            )
-
-            lookup_ms = round(
-                (perf_counter() - lookup_start) * 1000,
-                3,
-            )
-        
-            logger.info(
-                "AUTH_LOOKUP",
-                extra={
-                    "request_id": get_request_id(),
-                    "lookup_ms": lookup_ms,
-                    "elapsed_ms": elapsed_ms(),
-                },
-            )
         
             if not user:
-                print(f"❌ DEV USER NOT FOUND: {email}")
                 unauthorized("User not found", code=ErrorCode.USER_NOT_FOUND)
                 return
-
-            duration_ms = round((perf_counter() - auth_start) * 1000, 3)
-
-            logger.info(
-                "auth_profile",
-                extra={
-                    "request_id": get_request_id(),
-                    "elapsed_ms": elapsed_ms(),
-                    "mode": "dev",
-                    "duration_ms": duration_ms,
-                },
-            )
-
-            logger.info(
-                "SESSION_STATE",
-                extra={
-                    "request_id": get_request_id(),
-                    "email": user.email,
-                    "in_transaction": db.in_transaction(),
-                    "is_active": db.is_active,
-                    "elapsed_ms": elapsed_ms(),
-                },
-            )
-            logger.info(
-                "AUTH_RETURN_USER",
-                extra={
-                    "request_id": get_request_id(),
-                    "user_id": str(user.id),
-                    "email": user.email,
- #                  "pg_pid": backend_pid,
-                    "elapsed_ms": elapsed_ms(),
-                },
-            )
-
-            logger.info(
-                "AUTH_EXIT",
-                extra={"request_id": get_request_id(),"elapsed_ms": elapsed_ms(),},
-            )
     
             # Force-load only fields that actually exist
             _ = (
@@ -227,27 +130,6 @@ def get_current_user(
         elif user.firebase_uid != firebase_uid:
             unauthorized("Account mismatch detected", code=ErrorCode.UNAUTHORIZED)
             return
-
-        duration_ms = round((perf_counter() - auth_start) * 1000, 3)
-
-        logger.info(
-            "auth_profile",
-            extra={
-                "request_id": get_request_id(),
-                "elapsed_ms": elapsed_ms(),
-                "mode": "firebase",
-                "duration_ms": duration_ms,
-            },
-        )
-
-
-        logger.info(
-            "AUTH_RETURN_USER",
-            extra={
-                "request_id": get_request_id(),
-                "elapsed_ms": elapsed_ms(),
-            },
-        )
 
         # Force-load only fields that actually exist
         _ = (
