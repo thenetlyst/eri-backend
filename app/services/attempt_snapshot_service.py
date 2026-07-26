@@ -81,7 +81,7 @@ def build_attempt_snapshot(attempt, questions, answers):
             "selected_option": a.selected_option,
             "marked_for_review": a.marked_for_review,
             "hint_used": a.hint_used,
-            "hint_open_count": a.hint_open_count,
+            "answer_change_count": a.answer_change_count,
             "time_to_first_hint_seconds": a.time_to_first_hint_seconds,
         }
 
@@ -163,7 +163,6 @@ def build_attempt_snapshot(attempt, questions, answers):
                 # HINT
                 "hint": {
                     "used": ans["hint_used"] if ans else False,
-                    "opens": ans["hint_open_count"] if ans else 0,
                     "time_to_first_hint": (
                         ans["time_to_first_hint_seconds"] if ans else None
                     ),
@@ -175,6 +174,10 @@ def build_attempt_snapshot(attempt, questions, answers):
                         else q.hint_text
                     ),
                 },
+
+                "answer_change_count": (
+                    ans["answer_change_count"] if ans else 0
+                ),
             }
         )
 

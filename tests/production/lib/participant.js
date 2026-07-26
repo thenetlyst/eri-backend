@@ -1,3 +1,5 @@
+
+import { sleep } from "k6";
 import { randomInt } from "./helpers.js";
 
 export function createParticipant() {
@@ -65,11 +67,13 @@ export function createParticipant() {
 
 }
 
-export function reviewTime(profile) {
+export function review(profile) {
 
-    return randomInt(
-        profile.reviewMin,
-        profile.reviewMax
+    sleep(
+        randomInt(
+            profile.reviewMin,
+            profile.reviewMax
+        )
     );
 
 }

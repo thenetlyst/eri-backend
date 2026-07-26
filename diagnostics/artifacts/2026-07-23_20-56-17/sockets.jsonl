@@ -1,0 +1,16 @@
+{"collector":"sockets","data":{"Established":20,"TimeWait":746,"Bound":28,"Listen":32},"ts":"2026-07-23T20:56:24.5198742+05:30"}
+{"collector":"sockets","data":{"Established":20,"TimeWait":746,"Bound":28,"Listen":32},"ts":"2026-07-23T20:56:27.0695257+05:30"}
+{"collector":"sockets","data":{"Established":20,"TimeWait":746,"Bound":28,"Listen":32},"ts":"2026-07-23T20:56:29.4270764+05:30"}
+{"collector":"sockets","data":{"Established":394,"TimeWait":746,"Bound":216,"Listen":33},"ts":"2026-07-23T20:56:33.9477301+05:30"}
+{"collector":"sockets","data":{"Established":684,"TimeWait":746,"Bound":360,"Listen":33},"ts":"2026-07-23T20:56:41.4268141+05:30"}
+{"collector":"sockets","data":{"Established":778,"TimeWait":739,"Bound":407,"Listen":33},"ts":"2026-07-23T20:56:47.1702061+05:30"}
+{"collector":"sockets","data":{"Established":958,"TimeWait":738,"Bound":497,"Listen":33},"ts":"2026-07-23T20:56:53.7242144+05:30"}
+{"collector":"sockets","data":{"Established":1226,"TimeWait":737,"Bound":631,"Listen":33},"ts":"2026-07-23T20:57:01.1355071+05:30"}
+{"collector":"sockets","data":{"Established":1486,"TimeWait":737,"Bound":761,"Listen":33},"ts":"2026-07-23T20:57:09.5713051+05:30"}
+{"collector":"sockets","data":{"Established":1962,"TimeWait":726,"Bound":999,"Listen":33},"ts":"2026-07-23T20:57:19.6841734+05:30"}
+{"collector":"sockets","data":{"Established":2560,"TimeWait":726,"Bound":1298,"Listen":33},"ts":"2026-07-23T20:57:31.9766602+05:30"}
+{"collector":"sockets","data":{"Established":3290,"TimeWait":725,"Bound":1664,"Listen":33},"ts":"2026-07-23T20:57:47.4428359+05:30"}
+{"collector":"sockets","data":{"Established":3881,"TimeWait":725,"Bound":1958,"Listen":33},"ts":"2026-07-23T20:58:04.6453982+05:30"}
+{"collector":"sockets","data":{"TimeWait":150,"Established":4647,"Bound":2342,"Listen":33,"FinWait2":1,"CloseWait":1},"ts":"2026-07-23T20:58:24.2945460+05:30"}
+{"collector":"sockets","data":{"Established":5240,"TimeWait":1740,"Bound":2639,"Listen":33},"ts":"2026-07-23T20:58:47.5720993+05:30"}
+{"collector":"sockets","data":{"Established":23,"TimeWait":2137,"Bound":28,"Listen":32},"ts":"2026-07-23T20:58:51.7160078+05:30"}

@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -21,6 +21,7 @@ from app.core.exceptions import (
     NotFoundException,
     ForbiddenException,
 )
+from app.models.participant import Participant
 
 
 logger = logging.getLogger(__name__)
@@ -51,14 +52,25 @@ def list_questions(
 
         lookup_start = perf_counter()
 
-        attempt = (
-            db.query(Attempt)
-            .options(joinedload(Attempt.participant))
+        attempt_result = (
+            db.query(
+                Attempt,
+                Participant.user_id,
+            )
+            .join(
+                Participant,
+                Participant.id == Attempt.participant_id,
+            )
             .filter(
-                Attempt.id == attempt_id
+                Attempt.id == attempt_id,
             )
             .first()
         )
+
+        if not attempt_result:
+            raise NotFoundException("Attempt not found")
+
+        attempt, participant_user_id = attempt_result
 
         print("✓ Attempt lookup complete")
 
@@ -72,11 +84,8 @@ def list_questions(
             "LIST_QUESTIONS attempt_lookup_ms=%.2f",
             (perf_counter() - lookup_start) * 1000,
         )
-
-        if not attempt:
-            raise NotFoundException("Attempt not found")
     
-        if attempt.participant.user_id != current_user.id:
+        if participant_user_id != current_user.id:
             raise ForbiddenException("Unauthorized access to attempt")
     
         if attempt.status == AttemptStatus.SUBMITTED:
@@ -102,7 +111,7 @@ def list_questions(
         answers_start = perf_counter()
 
         answers = (
-            db.query(AttemptAnswer)
+            db.query(AttemptAnswer.question_id)
             .filter(
                 AttemptAnswer.attempt_id == attempt.id
             )
@@ -116,7 +125,10 @@ def list_questions(
             (perf_counter() - answers_start) * 1000,
         )
 
-        answered_map = {str(a.question_id): a for a in answers}
+        answered_map = {
+            str(question_id): True
+            for (question_id,) in answers
+        }
 
         build_start = perf_counter()
 
@@ -124,11 +136,21 @@ def list_questions(
 
         print("Building manifest...")
 
-        total_base = sum(1 for x in questions if not x["is_special"])
+        question_special = {}
+        total_base = 0
+
+        for q in questions:
+            is_special = q["is_special"]
+
+            question_special[q["id"]] = is_special
+
+            if not is_special:
+                total_base += 1
+
         answered_base = sum(
             1
-            for a in answers
-            if not next(q2 for q2 in questions if q2["id"] == str(a.question_id))["is_special"]
+            for (question_id,) in answers
+            if not question_special[str(question_id)]
         )
 
         for q in questions:
@@ -193,14 +215,27 @@ def get_question(
 
     now = datetime.now(timezone.utc)
 
-    attempt = db.query(Attempt).filter(
-        Attempt.id == attempt_id
-    ).first()
+    attempt_result = (
+        db.query(
+            Attempt,
+            Participant.user_id,
+        )
+        .join(
+            Participant,
+            Participant.id == Attempt.participant_id,
+        )
+        .filter(
+            Attempt.id == attempt_id,
+        )
+        .first()
+    )
 
-    if not attempt:
+    if not attempt_result:
         raise NotFoundException("Attempt not found")
 
-    if attempt.participant.user_id != current_user.id:
+    attempt, participant_user_id = attempt_result
+
+    if participant_user_id != current_user.id:
         raise ForbiddenException("Unauthorized access to attempt")
 
     if attempt.status == AttemptStatus.SUBMITTED:
@@ -243,16 +278,29 @@ def get_question(
         if not attempt.special_unlocked:
             raise ForbiddenException("Bonus not unlocked")
 
-        total_base = sum(1 for x in questions if not x["is_special"])
+        answers = (
+            db.query(AttemptAnswer.question_id)
+            .filter(
+                AttemptAnswer.attempt_id == attempt.id
+            )
+            .all()
+        )
 
-        answers = db.query(AttemptAnswer).filter(
-            AttemptAnswer.attempt_id == attempt.id
-        ).all()
+        question_special = {}
+        total_base = 0
+
+        for q in questions:
+            is_special = q["is_special"]
+
+            question_special[q["id"]] = is_special
+
+            if not is_special:
+                total_base += 1
 
         answered_base = sum(
             1
-            for a in answers
-            if not next(q2 for q2 in questions if q2["id"] == str(a.question_id))["is_special"]
+            for (question_id,) in answers
+            if not question_special[str(question_id)]
         )
 
         if answered_base < total_base:

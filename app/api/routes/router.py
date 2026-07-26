@@ -28,6 +28,13 @@ from app.api.routes.admin_csv_upload import router as admin_csv_upload_router
 # Exam Status
 from app.api.routes.exam_status import router as exam_status_router
 
+from app.api.routes.attempt_initialize import router as attempt_initialize_router
+
+from app.api.routes.attempt_activate import router as attempt_activate_router
+
+from app.api.routes.submit_answer_v2 import router as submit_answer_v2_router
+
+
 # ----------------------------------------------------------
 # Environment
 # ----------------------------------------------------------
@@ -105,6 +112,24 @@ api_router.include_router(
     tags=["Attempt Events"],
 )
 
+api_router.include_router(
+    attempt_initialize_router,
+    prefix="/attempts",
+    tags=["Attempt Initialization"],
+)
+
+api_router.include_router(
+    attempt_activate_router,
+    prefix="/attempts",
+    tags=["Attempt Activation"],
+)
+
+api_router.include_router(
+    submit_answer_v2_router,
+    prefix="/attempts",
+    tags=["Attempt Submission V2"],
+)
+
 # ----------------------------------------------------------
 # Questions
 # ----------------------------------------------------------
@@ -147,3 +172,5 @@ api_router.include_router(
     prefix="/admin",
     tags=["Admin Rebuild"],
 )
+
+

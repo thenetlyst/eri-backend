@@ -6,6 +6,7 @@ import { Trend } from "k6/metrics";
 
 const endpointTrends = {
     start_attempt: new Trend("start_attempt_latency"),
+    activate_attempt: new Trend("activate_attempt_latency"),
     list_questions: new Trend("list_questions_latency"),
     get_question: new Trend("get_question_latency"),
     submit_answer: new Trend("submit_answer_latency"),

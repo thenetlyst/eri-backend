@@ -16,7 +16,7 @@ export function submitAnswer(
 
     return post(
 
-        `${CONFIG.BASE_URL}/attempts/${attemptId}/submit-answer`,
+        `${CONFIG.BASE_URL}/attempts/${attemptId}/submit-answer-v2`,
 
         {
             question_id: questionId,

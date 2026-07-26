@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Integer,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -24,6 +25,10 @@ class AttemptAnswer(Base):
             "attempt_id",
             "question_id",
             name="uq_attempt_answer_question"
+        ),
+        Index(
+            "idx_attemptanswer_attempt",
+            "attempt_id",
         ),
     )
 
@@ -97,10 +102,11 @@ class AttemptAnswer(Base):
 
     first_hint_opened_at = Column(DateTime(timezone=True))
 
-    hint_open_count = Column(
+    answer_change_count = Column(
         Integer,
         nullable=False,
         default=0,
+        server_default="0",
     )
 
     time_to_first_hint_seconds = Column(Integer)

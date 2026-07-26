@@ -2,7 +2,9 @@ import { check } from "k6";
 
 import { validateConfig } from "../config/config.js";
 
-import { buildOptions } from "../workloads/options.js";
+import { buildCapacityOptions } from "../workloads/capacity_options.js";
+
+export const options = buildCapacityOptions();
 
 import {
     getUserNumber,
@@ -12,7 +14,6 @@ import {
     startAttempt,
 } from "../lib/attempt.js";
 
-export const options = buildOptions();
 
 export function setup() {
     validateConfig();

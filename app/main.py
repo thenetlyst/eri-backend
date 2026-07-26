@@ -77,7 +77,7 @@ app = FastAPI(title="ERI Assessment Engine")
 
 app.add_middleware(RequestTimelineMiddleware)
 
-#app.add_middleware(RequestProfilerMiddleware)
+app.add_middleware(RequestProfilerMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

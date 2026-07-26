@@ -41,6 +41,7 @@ class Attempt(Base):
         Index("idx_attempt_exam_day", "exam_day_id"),
         Index("idx_attempt_participant", "participant_id"),
         Index("idx_attempt_challenge", "challenge_id"),
+        Index("idx_attempt_status_started", "status", "started_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -72,7 +73,7 @@ class Attempt(Base):
     special_unlocked = Column(Boolean, nullable=False, default=False)
     bonus_entered = Column(Boolean, nullable=False, default=False)
 
-    started_at = Column(DateTime(timezone=True), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
     allowed_duration_seconds = Column(Integer, nullable=False)
 
     submitted_at = Column(DateTime(timezone=True))

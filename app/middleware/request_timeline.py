@@ -4,19 +4,26 @@ import logging
 from time import perf_counter
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core.request_context import start_request_context
-
+from app.core.request_context import (
+    start_request_context,
+    get_request_id,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class RequestTimelineMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        request_id = request.headers.get("X-Request-ID") or str(id(request))
 
+    async def dispatch(self, request, call_next):
+
+        request_id = request.headers.get("X-Request-ID")
+
+        if not request_id:
+            request_id = str(id(request))
+
+        start_request_context(request_id)
 
         start = perf_counter()
-        start_request_context(request_id)
 
         logger.info(
             "REQUEST_ENTER",
@@ -24,20 +31,27 @@ class RequestTimelineMiddleware(BaseHTTPMiddleware):
                 "request_id": request_id,
                 "path": request.url.path,
                 "method": request.method,
+                "t_ms": 0.0,
             },
         )
 
         try:
+
             response = await call_next(request)
+
+            return response
+
         finally:
-            total_ms = (perf_counter() - start) * 1000
+
+            total_ms = round(
+                (perf_counter() - start) * 1000,
+                3,
+            )
 
             logger.info(
                 "REQUEST_EXIT",
                 extra={
                     "request_id": request_id,
-                    "total_ms": round(total_ms, 3),
+                    "t_ms": total_ms,
                 },
             )
-
-        return response

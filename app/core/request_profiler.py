@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 import uuid
-
+import random
 from datetime import datetime, timezone
 from time import perf_counter
 
@@ -160,9 +160,15 @@ class RequestProfilerMiddleware(BaseHTTPMiddleware):
                     "X-Request-ID"
                 ] = request.state.request_id
 
-            logger.info(
-                json.dumps(
-                    payload,
-                    default=str,
+            #
+            # Log only 1 in every 1000 requests.
+            # Keeps profiling overhead negligible while still
+            # capturing representative slow requests.
+            #
+            if random.random() < 0.001:
+                logger.error(
+                    json.dumps(
+                        payload,
+                        default=str,
+                    )
                 )
-            )

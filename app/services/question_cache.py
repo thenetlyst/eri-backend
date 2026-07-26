@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Dict
 from threading import Lock
 
+from decimal import Decimal
 from app.db.session import SessionLocal
 from app.models.question import Question
 
@@ -62,3 +63,36 @@ def get_exam_day_questions_cached(exam_day_id: str) -> Dict[str, dict]:
     DO NOT REMOVE.
     """
     return get_exam_day_questions_map(exam_day_id)
+
+
+@lru_cache(maxsize=200)
+def get_exam_day_metadata_cached(exam_day_id: str) -> dict:
+    """
+    Cached metadata derived from the existing question cache.
+
+    No additional database queries are executed.
+    """
+
+    questions = get_exam_day_questions_cached(exam_day_id)
+
+    base_max_weight = Decimal("0")
+    bonus_max_weight = Decimal("0")
+    base_question_count = 0
+    bonus_question_count = 0
+
+    for question in questions.values():
+        weight = Decimal(str(question["weight"]))
+
+        if question["is_special"]:
+            bonus_max_weight += weight
+            bonus_question_count += 1
+        else:
+            base_max_weight += weight
+            base_question_count += 1
+
+    return {
+        "base_max_weight": base_max_weight,
+        "bonus_max_weight": bonus_max_weight,
+        "base_question_count": base_question_count,
+        "bonus_question_count": bonus_question_count,
+    }

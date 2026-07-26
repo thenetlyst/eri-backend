@@ -653,8 +653,11 @@ def submit_answer(
                             payload.question_id,
                             EVENT_HINT_USED,
                         )
+                    db.flush()
+                    db.commit()
 
                 except Exception:
+                    db.rollback()
                     logger.exception("Failed to log attempt events")
 
             logger.info(

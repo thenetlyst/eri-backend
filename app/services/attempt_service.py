@@ -4,13 +4,14 @@ import os
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy.orm import Session
-from sqlalchemy import update, func
+from sqlalchemy import update
 
 from app.models.attempt import Attempt, AttemptStatus
 from app.models.attempt_answer import AttemptAnswer
 from app.models.participant_progress import ParticipantProgress
-from app.models.question import Question
-
+from app.services.question_cache import (
+    get_exam_day_metadata_cached,
+)
 
 def finalize_attempt(db: Session, attempt: Attempt):
     """
@@ -111,7 +112,7 @@ def finalize_attempt(db: Session, attempt: Attempt):
             ParticipantProgress.participant_id == attempt.participant_id,
         )
     #   .with_for_update(nowait=True)
-        .with_for_update(skip_locked=True)
+        .with_for_update()
         .first()
     )
 
@@ -128,19 +129,15 @@ def finalize_attempt(db: Session, attempt: Attempt):
         db.add(progress)
         db.flush()
 
+
     # ==========================================================
-    # 🔥 OPTIMIZED: base max calculation (CRITICAL FIX)
+    # Cached exam metadata (no database query)
     # ==========================================================
-    base_max_today = (
-        db.query(func.coalesce(func.sum(Question.weight), 0))
-        .filter(
-            Question.exam_day_id == attempt.exam_day_id,
-            Question.is_special == False,
-        )
-        .scalar()
+    exam_metadata = get_exam_day_metadata_cached(
+        str(attempt.exam_day_id)
     )
 
-    base_max_today = Decimal(base_max_today)
+    base_max_today = exam_metadata["base_max_weight"]
 
     # ==========================================================
     # eligibility logic

@@ -5,6 +5,7 @@ import { runAssessment } from "../lib/workflow.js";
 
 import { getUserNumber } from "../lib/auth.js";
 import { validateConfig } from "../config/config.js";
+//import { EVENT } from "../config/event_config.js";
 
 export function setup() {
     validateConfig();

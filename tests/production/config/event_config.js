@@ -19,7 +19,7 @@ export const EVENT = {
     // Timing
     // -------------------------------------------------------------------------
 
-    EXAM_WINDOW_SECONDS: 90 * 60,
+    EXAM_WINDOW_SECONDS: 60 * 60,
 
     TARGET_ASSESSMENT_DURATION_SECONDS: 20 * 60,
 
@@ -39,7 +39,7 @@ export const EVENT = {
 
         MIDDLE_WINDOW_SECONDS: 20 * 60,
 
-        LATE_WINDOW_SECONDS: 60 * 60,
+        LATE_WINDOW_SECONDS: 15 * 60,
 
     },
 

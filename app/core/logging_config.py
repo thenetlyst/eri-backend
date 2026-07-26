@@ -62,5 +62,6 @@ def setup_logging():
 
     root_logger.handlers.clear()
 
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.ERROR)
+    #root_logger.setLevel(logging.INFO)
     root_logger.addHandler(handler)

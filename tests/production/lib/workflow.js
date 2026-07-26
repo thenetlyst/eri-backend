@@ -1,6 +1,6 @@
 import { check, sleep } from "k6";
 
-import { startAttempt } from "./attempt.js";
+import { activateAttempt } from "./attempt.js";
 import { listQuestions, getQuestion } from "./questions.js";
 import { submitAnswer } from "./answer.js";
 import { reconstructAttempt } from "./reconstruct.js";
@@ -9,6 +9,7 @@ import { finalizeAttempt } from "./finalize.js";
 import { randomOption } from "./helpers.js";
 
 import { think } from "./thinktime.js";
+import { review } from "./participant.js";
 
 import {
     assessmentsStarted,
@@ -44,7 +45,7 @@ export function runAssessment({
 
         let t = Date.now();
 
-        const attempt = startAttempt(userNumber);
+        const attempt = activateAttempt(userNumber);
         assessmentsStarted.add(1);
 
         platformTime += Date.now() - t;
@@ -194,45 +195,52 @@ export function runAssessment({
         // Review Time
         //
 
-        think(participant);
+        review(participant);
 
         //
         // Reconstruct
         //
 
-        t = Date.now();
+        const shouldReconstruct = Math.random() < 0.30;
 
-        const snapshot = reconstructAttempt(
+        if (shouldReconstruct) {
 
-            userNumber,
+            t = Date.now();
 
-            attempt.attempt_id
+            const snapshot = reconstructAttempt(
 
-        );
+                userNumber,
 
-        platformTime += Date.now() - t;
+                attempt.attempt_id
 
-        if (!check(snapshot, {
+            );
 
-            "snapshot returned": (r) => r !== null,
+            platformTime += Date.now() - t;
 
-            "attempt exists": (r) => !!r.snapshot?.attempt,
+            if (!check(snapshot, {
 
-            "questions restored": (r) =>
-                Array.isArray(r.snapshot?.questions),
+                "snapshot returned": (r) => r !== null,
 
-        })) {
+                "attempt exists": (r) => !!r.snapshot?.attempt,
 
-            throw new Error("Reconstruct failed.");
+                "questions restored": (r) =>
+                    Array.isArray(r.snapshot?.questions),
 
-        }
-        reconstructsPerformed.add(1);
+            })) {
 
-        if (mode === "reconstruct") {
+                throw new Error("Reconstruct failed.");
 
-            assessmentSuccess.add(true);
+            }
 
-            return snapshot;
+            reconstructsPerformed.add(1);
+
+            if (mode === "reconstruct") {
+
+                assessmentSuccess.add(true);
+
+                return snapshot;
+
+            }
 
         }
 

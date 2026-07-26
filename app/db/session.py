@@ -21,8 +21,11 @@ from threading import Lock
 import os
 import threading
 import uuid
-from app.core.request_context import get_request_id
 
+from app.core.request_context import (
+    get_request_id,
+    elapsed_ms,
+)
 
 _pool_lock = Lock()
 
@@ -363,6 +366,7 @@ def get_db():
         "DB_SESSION_ENTER",
         extra={
             "request_id": get_request_id(),
+            "elapsed_ms": elapsed_ms(),
         },
     )
 
@@ -373,8 +377,42 @@ def get_db():
             "DB_SESSION_EXIT",
             extra={
                 "request_id": get_request_id(),
+                "elapsed_ms": elapsed_ms(),
             },
         )
+
+    except Exception:
+
+        logger.info(
+            "DB_SESSION_EXCEPTION",
+            extra={
+                "request_id": get_request_id(),
+                "elapsed_ms": elapsed_ms(),
+            },
+        )
+
+        try:
+            if db.in_transaction():
+                db.rollback()
+
+                logger.info(
+                    "DB_SESSION_ROLLBACK",
+                    extra={
+                        "request_id": get_request_id(),
+                        "elapsed_ms": elapsed_ms(),
+                    },
+                )
+
+        except Exception:
+            logger.exception(
+                "DB_SESSION_ROLLBACK_FAILED",
+                extra={
+                    "request_id": get_request_id(),
+                    "elapsed_ms": elapsed_ms(),
+                },
+            )
+
+        raise
 
     finally:
 
@@ -382,6 +420,7 @@ def get_db():
             "DB_SESSION_FINALLY_START",
             extra={
                 "request_id": get_request_id(),
+                "elapsed_ms": elapsed_ms(),
             },
         )
 
@@ -392,30 +431,13 @@ def get_db():
 
         close_start = perf_counter()
 
-        try:
-            db.rollback()
-
-            logger.info(
-                "DB_SESSION_ROLLBACK",
-                extra={
-                    "request_id": get_request_id(),
-                },
-            )
-
-        except Exception:
-            logger.exception(
-                "DB_SESSION_ROLLBACK_FAILED",
-                extra={
-                    "request_id": get_request_id(),
-                },
-            )
-
         db.close()
 
         logger.info(
             "DB_SESSION_CLOSED",
             extra={
                 "request_id": get_request_id(),
+                "elapsed_ms": elapsed_ms(),
             },
         )
 
@@ -430,6 +452,7 @@ def get_db():
                 "request_id": get_request_id(),
                 "session_lifetime_ms": lifetime_ms,
                 "close_ms": close_ms,
+                "elapsed_ms": elapsed_ms(),
             },
         )
 
