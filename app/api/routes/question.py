@@ -1,11 +1,9 @@
 # app/api/routes/question.p
 import random
 import hashlib
-from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.attempt import Attempt, AttemptStatus
@@ -18,10 +16,13 @@ from app.core.exceptions import (
     ForbiddenException,
 )
 from app.models.participant import Participant
+from datetime import datetime, timezone, timedelta
+
+import logging
 
 router = APIRouter(tags=["Questions"])
 
-
+logger = logging.getLogger(__name__)
 # ==========================================================
 # LIST QUESTIONS (CACHED)
 # ==========================================================
@@ -138,144 +139,163 @@ def get_question(
     current_user: User = Depends(get_current_user),
 ):
 
-    now = datetime.now(timezone.utc)
+    try:
 
-    attempt_result = (
-        db.query(
-            Attempt,
-            Participant.user_id,
-        )
-        .join(
-            Participant,
-            Participant.id == Attempt.participant_id,
-        )
-        .filter(
-            Attempt.id == attempt_id,
-        )
-        .first()
-    )
+        now = datetime.now(timezone.utc)
 
-    if not attempt_result:
-        raise NotFoundException("Attempt not found")
-
-    attempt, participant_user_id = attempt_result
-
-    if participant_user_id != current_user.id:
-        raise ForbiddenException("Unauthorized access to attempt")
-
-    if attempt.status == AttemptStatus.SUBMITTED:
-        raise ForbiddenException("Attempt already completed")
-
-    if attempt.status != AttemptStatus.IN_PROGRESS:
-        raise ForbiddenException("Attempt is not active")
-
-    if not attempt.started_at:
-        raise ForbiddenException("Attempt not properly started")
-
-    if attempt.allowed_duration_seconds is None:
-        raise ForbiddenException("Attempt duration not configured")
-
-    expiry_time = attempt.started_at + timedelta(
-        seconds=attempt.allowed_duration_seconds
-    )
-
-    if now > expiry_time:
-        finalize_attempt(db, attempt)
-        db.commit()
-        raise ForbiddenException("Attempt time expired")
-
-    remaining_time = int((expiry_time - now).total_seconds())
-
-    # ⭐ CACHE HIT
-    cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
-    questions = [q.copy() for q in cached_questions.values()]
-
-    question = next(
-        (q for q in questions if q["question_order"] == question_order),
-        None
-    )
-
-    if not question:
-        raise NotFoundException("Question not found")
-
-    # Bonus gating
-    if question["is_special"]:
-        if not attempt.special_unlocked:
-            raise ForbiddenException("Bonus not unlocked")
-
-        answers = (
-            db.query(AttemptAnswer.question_id)
-            .filter(
-                AttemptAnswer.attempt_id == attempt.id
+        attempt_result = (
+            db.query(
+                Attempt,
+                Participant.user_id,
             )
-            .all()
+            .join(
+                Participant,
+                Participant.id == Attempt.participant_id,
+            )
+            .filter(
+                Attempt.id == attempt_id,
+            )
+            .first()
         )
 
-        question_special = {}
-        total_base = 0
+        if not attempt_result:
+            raise NotFoundException("Attempt not found")
 
-        for q in questions:
-            is_special = q["is_special"]
+        attempt, participant_user_id = attempt_result
 
-            question_special[q["id"]] = is_special
+        if participant_user_id != current_user.id:
+            raise ForbiddenException("Unauthorized access to attempt")
 
-            if not is_special:
-                total_base += 1
+        if attempt.status == AttemptStatus.SUBMITTED:
+            raise ForbiddenException("Attempt already completed")
 
-        answered_base = sum(
-            1
-            for (question_id,) in answers
-            if not question_special[str(question_id)]
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            raise ForbiddenException("Attempt is not active")
+
+        if not attempt.started_at:
+            raise ForbiddenException("Attempt not properly started")
+
+        if attempt.allowed_duration_seconds is None:
+            raise ForbiddenException("Attempt duration not configured")
+
+        expiry_time = attempt.started_at + timedelta(
+            seconds=attempt.allowed_duration_seconds
         )
 
-        if answered_base < total_base:
-            raise ForbiddenException("Complete base section before accessing bonus")
+        if now > expiry_time:
+            finalize_attempt(db, attempt)
+            db.commit()
+            raise ForbiddenException("Attempt time expired")
 
-    existing_answer = db.query(AttemptAnswer).filter(
-        AttemptAnswer.attempt_id == attempt.id,
-        AttemptAnswer.question_id == question["id"],
-    ).first()
+        remaining_time = int((expiry_time - now).total_seconds())
 
-    is_answered = existing_answer is not None
-    hint_used = existing_answer.hint_used if existing_answer else False
+        # ⭐ CACHE HIT
+        cached_questions = get_exam_day_questions_cached(str(attempt.exam_day_id))
+        questions = [q.copy() for q in cached_questions.values()]
 
-    # ⭐ JSON content (new)
-    content = question.get("content_json")
+        question = next(
+            (q for q in questions if q["question_order"] == question_order),
+            None
+        )
 
-    # Fallback options (legacy)
-    options = [
-        {"key": "A", "text": question["option_a"]},
-        {"key": "B", "text": question["option_b"]},
-        {"key": "C", "text": question["option_c"]},
-        {"key": "D", "text": question["option_d"]},
-    ]
+        if not question:
+            raise NotFoundException("Question not found")
 
-    seed_input = f"{attempt.id}-{question['id']}"
-    seed_hash = hashlib.sha256(seed_input.encode()).hexdigest()
-    seed = int(seed_hash, 16)
+        # Bonus gating
+        if question["is_special"]:
+            if not attempt.special_unlocked:
+                raise ForbiddenException("Bonus not unlocked")
 
-    rng = random.Random(seed)
-    rng.shuffle(options)
+            answers = (
+                db.query(AttemptAnswer.question_id)
+                .filter(
+                    AttemptAnswer.attempt_id == attempt.id
+                )
+                .all()
+            )
 
-    return {
-        "question_id": question["id"],
-        "question_order": question["question_order"],
+            question_special = {}
+            total_base = 0
 
-        # ⭐ NEW JSON content
-        "content": content,
+            for q in questions:
+                is_special = q["is_special"]
 
-        # fallback legacy fields
-        "question_text": question["question_text"],
+                question_special[q["id"]] = is_special
 
-        "difficulty": question["difficulty"],
-        "weight": question["weight"],
-        "hint_penalty_percentage": question["hint_penalty_percentage"],
-        "is_special": question["is_special"],
-        "is_answered": is_answered,
-        "hint_used": hint_used,
-        "options": options,
-        "remaining_time_seconds": max(remaining_time, 0),
-    }
+                if not is_special:
+                    total_base += 1
+
+            answered_base = sum(
+                1
+                for (question_id,) in answers
+                if not question_special[str(question_id)]
+            )
+
+            if answered_base < total_base:
+                raise ForbiddenException("Complete base section before accessing bonus")
+
+        existing_answer = db.query(AttemptAnswer).filter(
+            AttemptAnswer.attempt_id == attempt.id,
+            AttemptAnswer.question_id == question["id"],
+        ).first()
+
+        is_answered = existing_answer is not None
+        hint_used = existing_answer.hint_used if existing_answer else False
+
+        # ⭐ JSON content (new)
+        content = question.get("content_json")
+
+        # Fallback options (legacy)
+        options = [
+            {"key": "A", "text": question["option_a"]},
+            {"key": "B", "text": question["option_b"]},
+            {"key": "C", "text": question["option_c"]},
+            {"key": "D", "text": question["option_d"]},
+        ]
+
+        seed_input = f"{attempt.id}-{question['id']}"
+        seed_hash = hashlib.sha256(seed_input.encode()).hexdigest()
+        seed = int(seed_hash, 16)
+
+        rng = random.Random(seed)
+        rng.shuffle(options)
+
+        return {
+            "question_id": question["id"],
+            "question_order": question["question_order"],
+
+            # ⭐ NEW JSON content
+            "content": content,
+
+            # fallback legacy fields
+            "question_text": question["question_text"],
+
+            "difficulty": question["difficulty"],
+            "weight": question["weight"],
+            "hint_penalty_percentage": question["hint_penalty_percentage"],
+            "is_special": question["is_special"],
+            "is_answered": is_answered,
+            "hint_used": hint_used,
+            "options": options,
+            "remaining_time_seconds": max(remaining_time, 0),
+        }
+
+    except (NotFoundException, ForbiddenException):
+        raise
+    except Exception:
+
+        logger.exception(
+            "GET_QUESTION_FAILED",
+            extra={
+                "attempt_id": attempt_id,
+                "question_order": question_order,
+                "user_id": str(current_user.id)
+                if current_user
+                else None,
+            },
+        )
+
+        raise
 # ==========================================================
 # DEBUG — CLEAR QUESTION CACHE (REMOVE LATER)
 # ==========================================================

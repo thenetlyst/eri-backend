@@ -33,6 +33,19 @@ export function runAssessment({
 
 }) {
 
+    const AssessmentState = {
+
+        ACTIVE: "ACTIVE",
+
+        EXPIRED: "EXPIRED",
+
+        SUBMITTED: "SUBMITTED",
+
+    };
+
+    let assessmentState =
+        AssessmentState.ACTIVE;
+
     const startTime = Date.now();
 
     let platformTime = 0;
@@ -102,6 +115,7 @@ export function runAssessment({
 
         for (const item of manifest) {
 
+
             if (item.bonus_locked) {
                 continue;
             }
@@ -146,7 +160,7 @@ export function runAssessment({
 
             t = Date.now();
 
-            const answer = submitAnswer(
+            const answerResult = submitAnswer(
 
                 userNumber,
 
@@ -162,11 +176,59 @@ export function runAssessment({
 
             platformTime += Date.now() - t;
 
+            const response = answerResult.response;
+            const answer = answerResult.data;
+            const expected = answerResult.expected;
+
+            if (response.status === 403) {
+
+                const code = answer?.detail?.code;
+
+                switch (code) {
+
+                    case "ATTEMPT_EXPIRED":
+
+                        assessmentState =
+                            AssessmentState.EXPIRED;
+
+                        break;
+
+                    case "ATTEMPT_ALREADY_SUBMITTED":
+
+                        assessmentState =
+                            AssessmentState.SUBMITTED;
+
+                        break;
+
+                    default:
+
+                        throw new Error(
+                            `Unexpected response: ${code}`
+                        );
+
+                }
+
+                break;
+
+            }
+
+            if (!expected) {
+
+                throw new Error(
+                    `Unexpected response ${response.status}`
+                );
+
+            }
+
             if (!check(answer, {
+
                 "answer stored": (a) => a !== null,
+
             })) {
 
-                throw new Error("Answer submission failed.");
+                throw new Error(
+                    "Answer submission failed."
+                );
 
             }
 
@@ -191,17 +253,55 @@ export function runAssessment({
 
         }
 
+        if (
+            assessmentState ===
+            AssessmentState.EXPIRED
+        ) {
+
+            assessmentsFailed.add(1);
+
+            assessmentSuccess.add(false);
+
+            return;
+
+        }
+
+        if (
+            assessmentState ===
+            AssessmentState.SUBMITTED
+        ) {
+
+            assessmentsCompleted.add(1);
+
+            assessmentSuccess.add(true);
+
+            return;
+
+        }
+
         //
         // Review Time
         //
 
-        review(participant);
+        if (
+            assessmentState ===
+            AssessmentState.ACTIVE
+        ) {
+
+            review(participant);
+
+        }
 
         //
         // Reconstruct
         //
 
-        const shouldReconstruct = Math.random() < 0.30;
+        const shouldReconstruct =
+        
+            assessmentState ===
+            AssessmentState.ACTIVE &&
+        
+            Math.random() < 0.30;
 
         if (shouldReconstruct) {
 
@@ -248,6 +348,18 @@ export function runAssessment({
         // Finalize
         //
 
+
+
+
+        if (
+            assessmentState !==
+            AssessmentState.ACTIVE
+        ){
+
+            return;
+
+        }
+
         t = Date.now();
 
         const finalized = finalizeAttempt(
@@ -258,6 +370,7 @@ export function runAssessment({
 
         );
 
+        
         platformTime += Date.now() - t;
 
         const finalizedOk = check(finalized, {

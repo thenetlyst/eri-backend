@@ -32,6 +32,6 @@ export function submitAnswer(
             endpoint: "submit_answer",
         }
 
-    ).data;
+    );
 
 }
